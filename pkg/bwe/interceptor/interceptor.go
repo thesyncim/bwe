@@ -32,14 +32,15 @@ const (
 type BWEInterceptor struct {
 	interceptor.NoOp // Embed for interface compliance
 
-	estimator *bwe.BandwidthEstimator
-	streams   sync.Map // SSRC (uint32) -> *streamState
+	estimator     *bwe.BandwidthEstimator
+	rembScheduler *bwe.REMBScheduler
+	streams       sync.Map // SSRC (uint32) -> *streamState
 
 	// Extension IDs (atomic for concurrent access)
 	absExtID     atomic.Uint32
 	captureExtID atomic.Uint32
 
-	// RTCP writer and REMB scheduling (will be set in Plan 03)
+	// RTCP writer and REMB scheduling
 	mu           sync.Mutex
 	rtcpWriter   interceptor.RTCPWriter
 	rembInterval time.Duration
@@ -86,6 +87,14 @@ func NewBWEInterceptor(estimator *bwe.BandwidthEstimator, opts ...InterceptorOpt
 	for _, opt := range opts {
 		opt(i)
 	}
+
+	// Create and attach REMB scheduler
+	rembConfig := bwe.DefaultREMBSchedulerConfig()
+	rembConfig.Interval = i.rembInterval
+	rembConfig.SenderSSRC = i.senderSSRC
+	i.rembScheduler = bwe.NewREMBScheduler(rembConfig)
+	i.estimator.SetREMBScheduler(i.rembScheduler)
+
 	return i
 }
 
