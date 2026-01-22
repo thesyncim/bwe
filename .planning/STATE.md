@@ -5,36 +5,36 @@
 See: .planning/PROJECT.md (updated 2026-01-22)
 
 **Core value:** Generate accurate REMB feedback that matches libwebrtc/Chrome receiver behavior
-**Current focus:** Phase 2 - Rate Control (Phase 1 complete)
+**Current focus:** Phase 2 - Rate Control (Plan 01 complete)
 
 ## Current Position
 
-Phase: 1 of 4 (Foundation & Core Pipeline) - COMPLETE
-Plan: 6 of 6 in current phase
-Status: Phase 1 Complete
-Last activity: 2026-01-22 - Completed 01-06-PLAN.md
+Phase: 2 of 4 (Rate Control & REMB)
+Plan: 1 of 6 in current phase
+Status: In progress
+Last activity: 2026-01-22 - Completed 02-01-PLAN.md
 
-Progress: [██████░░░░░░░░░░░░░░░░░] 26% (6/23 plans)
+Progress: [███████░░░░░░░░░░░░░░░░] 30% (7/23 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 6
-- Average duration: 3.8 min
-- Total execution time: 23 min
+- Total plans completed: 7
+- Average duration: 3.7 min
+- Total execution time: 27 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1. Foundation | 6/6 | 23 min | 3.8 min |
-| 2. Rate Control | 0/6 | - | - |
+| 2. Rate Control | 1/6 | 4 min | 4.0 min |
 | 3. Pion Integration | 0/6 | - | - |
 | 4. Validation | 0/5 | - | - |
 
 **Recent Trend:**
-- Last 6 plans: 01-01 (2 min), 01-02 (3 min), 01-03 (2 min), 01-04 (3 min), 01-05 (5 min), 01-06 (8 min)
-- Trend: Increase in 01-06 due to integration testing complexity
+- Last 7 plans: 01-02 (3 min), 01-03 (2 min), 01-04 (3 min), 01-05 (5 min), 01-06 (8 min), 02-01 (4 min)
+- Trend: 02-01 back to normal after 01-06 integration complexity
 
 *Updated after each plan completion*
 
@@ -58,6 +58,8 @@ Recent decisions affecting current work:
 - Asymmetric K_u/K_d coefficients (0.01/0.00018): Critical for TCP fairness
 - Adapter pattern for filter abstraction: delayFilter interface wraps Kalman/Trendline
 - Trendline detects TRENDS not absolute delays: constant input yields slope toward zero
+- **[NEW 02-01]** Use slice for RateStats samples (simpler than ring buffer, sufficient for 1s window)
+- **[NEW 02-01]** Return ok=false when elapsed < 1ms (avoids division precision issues)
 
 ### Pending Todos
 
@@ -69,15 +71,15 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-01-22T15:29:00Z
-Stopped at: Completed 01-06-PLAN.md (Phase 1 Complete)
+Last session: 2026-01-22T16:07:15Z
+Stopped at: Completed 02-01-PLAN.md
 Resume file: None
 
 ---
 
 ## Quick Reference
 
-**Next action:** `/gsd:execute-phase 2` (start Phase 2 - Rate Control)
+**Next action:** `/gsd:execute-plan 02-02` (AIMD rate controller)
 
 **Phase 1 Complete:**
 - Delay measurement with timestamp parsing [COMPLETED in 01-01]
@@ -87,20 +89,31 @@ Resume file: None
 - Overuse detector with adaptive threshold [COMPLETED in 01-05]
 - Pipeline integration with DelayEstimator [COMPLETED in 01-06]
 
+**Phase 2 Progress:**
+- Incoming bitrate measurement (RateStats) [COMPLETED in 02-01]
+- AIMD rate controller [PENDING 02-02]
+- REMB message generation [PENDING 02-03]
+- Initial bandwidth estimation [PENDING 02-04]
+- Rate controller integration [PENDING 02-05]
+- Rate controller testing [PENDING 02-06]
+
 **Phase 1 API Surface:**
 - `DelayEstimator` - Main entry point
 - `OnPacket(PacketInfo) BandwidthUsage` - Process packet, get congestion state
 - `SetCallback(StateChangeCallback)` - Get notified on state changes
 - `BwNormal`, `BwUnderusing`, `BwOverusing` - Congestion states
 
-**Phase 2 goals (upcoming):**
-- AIMD rate controller
-- REMB message generation
-- Rate estimation from packet arrivals
-- Initial bandwidth estimation
+**Phase 2 API Surface (in progress):**
+- `RateStats` - Sliding window bitrate measurement
+- `NewRateStats(config) -> Update(bytes, time) -> Rate(time) -> (bps, ok)`
 
 **Critical pitfalls handled in Phase 1:**
 - Adaptive threshold required (static causes TCP starvation) [HANDLED]
 - 24-bit timestamp wraparound at 64s [HANDLED]
 - Burst grouping for video traffic [HANDLED]
 - Monotonic time only (no wall clock) [HANDLED]
+
+**Critical pitfalls to handle in Phase 2:**
+- AIMD decrease uses measured_incoming_rate (NOT current estimate)
+- Rate increase max limited by max_rate_increase_bps_per_second
+- Underuse -> hold rate (not increase)
