@@ -1,10 +1,12 @@
 package interceptor
 
 import (
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/pion/interceptor"
+	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -343,4 +345,209 @@ func TestStreamState_UpdatedOnPacket(t *testing.T) {
 	updatedTime := state.LastPacket()
 	assert.True(t, updatedTime.After(initialTime) || updatedTime.Equal(initialTime),
 		"Last packet time should be updated after processing packet")
+}
+
+// mockRTCPWriter is a test RTCPWriter that captures written packets.
+type mockRTCPWriter struct {
+	mu      sync.Mutex
+	packets []rtcp.Packet
+}
+
+func (m *mockRTCPWriter) Write(pkts []rtcp.Packet, _ interceptor.Attributes) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.packets = append(m.packets, pkts...)
+	return len(pkts), nil
+}
+
+func (m *mockRTCPWriter) getPackets() []rtcp.Packet {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]rtcp.Packet, len(m.packets))
+	copy(result, m.packets)
+	return result
+}
+
+func TestBindRTCPWriter_StartsREMBLoop(t *testing.T) {
+	estimator := bwe.NewBandwidthEstimator(bwe.DefaultBandwidthEstimatorConfig(), nil)
+	// Use short interval for faster test
+	i := NewBWEInterceptor(estimator, WithREMBInterval(50*time.Millisecond))
+	defer i.Close()
+
+	// Bind stream and send some packets to generate estimate
+	testSSRC := uint32(0xAABBCCDD)
+	extID := uint8(3)
+
+	info := &interceptor.StreamInfo{
+		SSRC: testSSRC,
+		RTPHeaderExtensions: []interceptor.RTPHeaderExtension{
+			{URI: AbsSendTimeURI, ID: int(extID)},
+		},
+	}
+
+	// Create multiple RTP packets with increasing send times
+	var packets [][]byte
+	for j := 0; j < 20; j++ {
+		// abs-send-time in 6.18 fixed point format
+		// Small increments to simulate steady flow
+		sendTime := uint32((j * 0x1000) & 0xFFFFFF)
+		packets = append(packets, makeRTPWithAbsSendTime(testSSRC, extID, sendTime))
+	}
+
+	reader := &mockRTPReader{packets: packets}
+	wrappedReader := i.BindRemoteStream(info, reader)
+
+	// Read all packets to feed estimator
+	buf := make([]byte, 1500)
+	for j := 0; j < len(packets); j++ {
+		n, _, err := wrappedReader.Read(buf, nil)
+		require.NoError(t, err)
+		require.Greater(t, n, 0)
+		time.Sleep(5 * time.Millisecond) // Spread out packet arrivals
+	}
+
+	// Bind RTCP writer - this starts the REMB loop
+	mockWriter := &mockRTCPWriter{}
+	returnedWriter := i.BindRTCPWriter(mockWriter)
+	assert.Equal(t, mockWriter, returnedWriter, "BindRTCPWriter should return the same writer")
+
+	// Wait for at least 2-3 REMB intervals
+	time.Sleep(200 * time.Millisecond)
+
+	// Verify REMB packets were written
+	pkts := mockWriter.getPackets()
+	assert.Greater(t, len(pkts), 0, "Expected at least one REMB packet to be written")
+
+	// Check that at least one packet is a REMB
+	var foundREMB bool
+	for _, pkt := range pkts {
+		if remb, ok := pkt.(*rtcp.ReceiverEstimatedMaximumBitrate); ok {
+			foundREMB = true
+			assert.Greater(t, remb.Bitrate, float32(0), "REMB bitrate should be positive")
+			t.Logf("REMB sent: bitrate=%.0f bps, SSRCs=%v", remb.Bitrate, remb.SSRCs)
+		}
+	}
+	assert.True(t, foundREMB, "Expected at least one REMB packet")
+}
+
+func TestREMB_IncludesAllSSRCs(t *testing.T) {
+	estimator := bwe.NewBandwidthEstimator(bwe.DefaultBandwidthEstimatorConfig(), nil)
+	i := NewBWEInterceptor(estimator, WithREMBInterval(50*time.Millisecond))
+	defer i.Close()
+
+	ssrc1 := uint32(0x11111111)
+	ssrc2 := uint32(0x22222222)
+	extID := uint8(3)
+
+	// Bind first stream
+	info1 := &interceptor.StreamInfo{
+		SSRC: ssrc1,
+		RTPHeaderExtensions: []interceptor.RTPHeaderExtension{
+			{URI: AbsSendTimeURI, ID: int(extID)},
+		},
+	}
+	packets1 := make([][]byte, 10)
+	for j := 0; j < 10; j++ {
+		packets1[j] = makeRTPWithAbsSendTime(ssrc1, extID, uint32(j*0x1000))
+	}
+	reader1 := &mockRTPReader{packets: packets1}
+	wrappedReader1 := i.BindRemoteStream(info1, reader1)
+
+	// Bind second stream
+	info2 := &interceptor.StreamInfo{
+		SSRC: ssrc2,
+		RTPHeaderExtensions: []interceptor.RTPHeaderExtension{
+			{URI: AbsSendTimeURI, ID: int(extID)},
+		},
+	}
+	packets2 := make([][]byte, 10)
+	for j := 0; j < 10; j++ {
+		packets2[j] = makeRTPWithAbsSendTime(ssrc2, extID, uint32(j*0x1000+0x100))
+	}
+	reader2 := &mockRTPReader{packets: packets2}
+	wrappedReader2 := i.BindRemoteStream(info2, reader2)
+
+	// Read packets from both streams
+	buf := make([]byte, 1500)
+	for j := 0; j < 10; j++ {
+		wrappedReader1.Read(buf, nil)
+		wrappedReader2.Read(buf, nil)
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// Bind RTCP writer
+	mockWriter := &mockRTCPWriter{}
+	i.BindRTCPWriter(mockWriter)
+
+	// Wait for REMB
+	time.Sleep(150 * time.Millisecond)
+
+	// Check that REMB includes both SSRCs
+	pkts := mockWriter.getPackets()
+	var foundREMBWithBothSSRCs bool
+	for _, pkt := range pkts {
+		if remb, ok := pkt.(*rtcp.ReceiverEstimatedMaximumBitrate); ok {
+			// Check if both SSRCs are in the REMB
+			hasSSRC1 := false
+			hasSSRC2 := false
+			for _, ssrc := range remb.SSRCs {
+				if ssrc == ssrc1 {
+					hasSSRC1 = true
+				}
+				if ssrc == ssrc2 {
+					hasSSRC2 = true
+				}
+			}
+			if hasSSRC1 && hasSSRC2 {
+				foundREMBWithBothSSRCs = true
+				break
+			}
+		}
+	}
+	assert.True(t, foundREMBWithBothSSRCs, "Expected REMB to include both SSRCs")
+}
+
+func TestREMB_WriterNotBound_NoError(t *testing.T) {
+	estimator := bwe.NewBandwidthEstimator(bwe.DefaultBandwidthEstimatorConfig(), nil)
+	i := NewBWEInterceptor(estimator)
+	defer i.Close()
+
+	// Don't bind RTCPWriter, just call maybeSendREMB directly
+	// This should not panic or return error
+	i.maybeSendREMB(time.Now())
+
+	// Also test with some packets processed but writer not bound
+	testSSRC := uint32(0xDEADBEEF)
+	extID := uint8(3)
+
+	info := &interceptor.StreamInfo{
+		SSRC: testSSRC,
+		RTPHeaderExtensions: []interceptor.RTPHeaderExtension{
+			{URI: AbsSendTimeURI, ID: int(extID)},
+		},
+	}
+
+	packets := make([][]byte, 5)
+	for j := 0; j < 5; j++ {
+		packets[j] = makeRTPWithAbsSendTime(testSSRC, extID, uint32(j*0x1000))
+	}
+	reader := &mockRTPReader{packets: packets}
+	wrappedReader := i.BindRemoteStream(info, reader)
+
+	buf := make([]byte, 1500)
+	for j := 0; j < 5; j++ {
+		wrappedReader.Read(buf, nil)
+	}
+
+	// Call maybeSendREMB - should not panic
+	i.maybeSendREMB(time.Now())
+}
+
+func TestREMBScheduler_AttachedOnCreate(t *testing.T) {
+	estimator := bwe.NewBandwidthEstimator(bwe.DefaultBandwidthEstimatorConfig(), nil)
+	i := NewBWEInterceptor(estimator)
+	defer i.Close()
+
+	// Verify REMB scheduler was attached
+	assert.NotNil(t, i.rembScheduler, "REMB scheduler should be created")
 }
