@@ -298,3 +298,265 @@ func TestConstants(t *testing.T) {
 		t.Errorf("Max duration = %v, want %v", maxDuration, expected)
 	}
 }
+
+// =============================================================================
+// Abs-Capture-Time Tests (64-bit UQ32.32 format)
+// =============================================================================
+
+func TestParseAbsCaptureTime(t *testing.T) {
+	tests := []struct {
+		name    string
+		data    []byte
+		want    uint64
+		wantErr bool
+	}{
+		{
+			name: "zero value",
+			data: []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+			want: 0,
+		},
+		{
+			name: "one unit",
+			data: []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01},
+			want: 1,
+		},
+		{
+			name: "one second (1 << 32)",
+			data: []byte{0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00},
+			want: 1 << 32, // 4294967296
+		},
+		{
+			name: "half second (1 << 31 in fractional part)",
+			data: []byte{0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00},
+			want: 1 << 31, // 2147483648 = 0.5 seconds in UQ32.32
+		},
+		{
+			name: "10 seconds",
+			data: []byte{0x00, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x00, 0x00},
+			want: 10 << 32,
+		},
+		{
+			name: "max value",
+			data: []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF},
+			want: 0xFFFFFFFFFFFFFFFF,
+		},
+		{
+			name: "extra bytes ignored",
+			data: []byte{0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0xAB, 0xCD},
+			want: 1 << 32,
+		},
+		{
+			name:    "too short - 7 bytes",
+			data:    []byte{0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00},
+			wantErr: true,
+		},
+		{
+			name:    "too short - 3 bytes",
+			data:    []byte{0x01, 0x02, 0x03},
+			wantErr: true,
+		},
+		{
+			name:    "empty input",
+			data:    []byte{},
+			wantErr: true,
+		},
+		{
+			name:    "nil input",
+			data:    nil,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseAbsCaptureTime(tt.data)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseAbsCaptureTime() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("ParseAbsCaptureTime() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAbsCaptureTimeToDuration(t *testing.T) {
+	tests := []struct {
+		name  string
+		value uint64
+		want  time.Duration
+	}{
+		{
+			name:  "zero",
+			value: 0,
+			want:  0,
+		},
+		{
+			name:  "one second (1 << 32)",
+			value: 1 << 32,
+			want:  time.Second,
+		},
+		{
+			name:  "half second (1 << 31)",
+			value: 1 << 31,
+			want:  500 * time.Millisecond,
+		},
+		{
+			name:  "quarter second (1 << 30)",
+			value: 1 << 30,
+			want:  250 * time.Millisecond,
+		},
+		{
+			name:  "10 seconds",
+			value: 10 << 32,
+			want:  10 * time.Second,
+		},
+		{
+			name:  "1 second + 0.5 second",
+			value: (1 << 32) + (1 << 31),
+			want:  1500 * time.Millisecond,
+		},
+		{
+			name:  "60 seconds",
+			value: 60 << 32,
+			want:  60 * time.Second,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := AbsCaptureTimeToDuration(tt.value)
+			// Allow small floating point tolerance
+			diff := got - tt.want
+			if diff < 0 {
+				diff = -diff
+			}
+			if diff > time.Microsecond {
+				t.Errorf("AbsCaptureTimeToDuration(%d) = %v, want %v (diff: %v)", tt.value, got, tt.want, diff)
+			}
+		})
+	}
+}
+
+func TestUnwrapAbsCaptureTime(t *testing.T) {
+	tests := []struct {
+		name string
+		prev uint64
+		curr uint64
+		want int64
+	}{
+		{
+			name: "no change",
+			prev: 1000,
+			curr: 1000,
+			want: 0,
+		},
+		{
+			name: "forward - small delta",
+			prev: 1000,
+			curr: 2000,
+			want: 1000,
+		},
+		{
+			name: "backward - small delta",
+			prev: 2000,
+			curr: 1000,
+			want: -1000,
+		},
+		{
+			name: "forward - 1 second",
+			prev: 0,
+			curr: 1 << 32,
+			want: 1 << 32,
+		},
+		{
+			name: "backward - 1 second",
+			prev: 1 << 32,
+			curr: 0,
+			want: -(1 << 32),
+		},
+		{
+			name: "large forward - 10 seconds",
+			prev: 0,
+			curr: 10 << 32,
+			want: 10 << 32,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := UnwrapAbsCaptureTime(tt.prev, tt.curr)
+			if got != tt.want {
+				t.Errorf("UnwrapAbsCaptureTime(%d, %d) = %d, want %d", tt.prev, tt.curr, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUnwrapAbsCaptureTimeDuration(t *testing.T) {
+	tests := []struct {
+		name string
+		prev uint64
+		curr uint64
+		want time.Duration
+	}{
+		{
+			name: "one second forward",
+			prev: 0,
+			curr: 1 << 32,
+			want: time.Second,
+		},
+		{
+			name: "one second backward",
+			prev: 1 << 32,
+			curr: 0,
+			want: -time.Second,
+		},
+		{
+			name: "100ms forward",
+			prev: 0,
+			curr: (1 << 32) / 10, // 0.1 seconds in UQ32.32
+			want: 100 * time.Millisecond,
+		},
+		{
+			name: "1.5 seconds forward",
+			prev: 0,
+			curr: (1 << 32) + (1 << 31),
+			want: 1500 * time.Millisecond,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := UnwrapAbsCaptureTimeDuration(tt.prev, tt.curr)
+			// Allow small floating point tolerance (1ms)
+			diff := got - tt.want
+			if diff < 0 {
+				diff = -diff
+			}
+			if diff > time.Millisecond {
+				t.Errorf("UnwrapAbsCaptureTimeDuration(%d, %d) = %v, want %v (diff: %v)", tt.prev, tt.curr, got, tt.want, diff)
+			}
+		})
+	}
+}
+
+func TestAbsCaptureTimeConstants(t *testing.T) {
+	// Verify abs-capture-time resolution: 1 << 32 units should equal 1 second
+	oneSecondUnits := uint64(1 << 32)
+	oneSecond := AbsCaptureTimeToDuration(oneSecondUnits)
+	diff := oneSecond - time.Second
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff > time.Microsecond {
+		t.Errorf("1 << 32 units = %v, want 1s", oneSecond)
+	}
+
+	// Verify resolution constant is approximately 1/2^32 seconds
+	expectedResolution := 1.0 / (1 << 32)
+	if AbsCaptureTimeResolution != expectedResolution {
+		t.Errorf("AbsCaptureTimeResolution = %e, want %e", AbsCaptureTimeResolution, expectedResolution)
+	}
+}

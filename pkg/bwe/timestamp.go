@@ -69,3 +69,70 @@ func UnwrapAbsSendTimeDuration(prev, curr uint32) time.Duration {
 	seconds := float64(delta) * AbsSendTimeResolution
 	return time.Duration(seconds * float64(time.Second))
 }
+
+// =============================================================================
+// Abs-Capture-Time (64-bit UQ32.32 format)
+// =============================================================================
+
+// ErrInvalidAbsCaptureTime is returned when the input data is too short to parse
+// an abs-capture-time value.
+var ErrInvalidAbsCaptureTime = errors.New("bwe: invalid abs-capture-time data, need at least 8 bytes")
+
+// AbsCaptureTimeResolution is the time resolution of one abs-capture-time unit.
+// The UQ32.32 format has 32 bits for the fractional part: 1/2^32 seconds (~233 picoseconds).
+const AbsCaptureTimeResolution = 1.0 / (1 << 32) // ~2.33e-10 seconds per unit
+
+// ParseAbsCaptureTime parses a 64-bit abs-capture-time value from an 8-byte
+// big-endian representation. This is the UQ32.32 format where the upper 32 bits
+// are seconds and the lower 32 bits are fractions of a second.
+//
+// The abs-capture-time extension uses 64 bits, providing ~136 years of range
+// with sub-nanosecond precision.
+func ParseAbsCaptureTime(data []byte) (uint64, error) {
+	if len(data) < 8 {
+		return 0, ErrInvalidAbsCaptureTime
+	}
+	return (uint64(data[0]) << 56) | (uint64(data[1]) << 48) | (uint64(data[2]) << 40) |
+		(uint64(data[3]) << 32) | (uint64(data[4]) << 24) | (uint64(data[5]) << 16) |
+		(uint64(data[6]) << 8) | uint64(data[7]), nil
+}
+
+// AbsCaptureTimeToDuration converts a 64-bit abs-capture-time value to a time.Duration.
+// The value is interpreted using UQ32.32 format: upper 32 bits are seconds,
+// lower 32 bits are fractions of a second.
+//
+// Example: value 0x0000000100000000 (1 << 32) equals exactly 1 second.
+func AbsCaptureTimeToDuration(value uint64) time.Duration {
+	// Split into seconds (upper 32 bits) and fraction (lower 32 bits)
+	seconds := value >> 32
+	fraction := value & 0xFFFFFFFF
+
+	// Convert seconds directly, then add fractional part
+	// Fractional part: (fraction / 2^32) * 1 second
+	fractionDuration := time.Duration(float64(fraction) * AbsCaptureTimeResolution * float64(time.Second))
+
+	return time.Duration(seconds)*time.Second + fractionDuration
+}
+
+// UnwrapAbsCaptureTime computes the signed delta between two abs-capture-time values.
+//
+// Unlike abs-send-time, the 64-bit abs-capture-time has a range of ~136 years,
+// so wraparound within any practical session is not a concern. The function
+// simply computes the signed difference between the two values.
+//
+// Returns the signed delta in abs-capture-time units (not seconds).
+func UnwrapAbsCaptureTime(prev, curr uint64) int64 {
+	// For 64-bit timestamps, the range is so large (~136 years) that
+	// simple signed subtraction is sufficient for any practical use.
+	return int64(curr) - int64(prev)
+}
+
+// UnwrapAbsCaptureTimeDuration computes the time delta between two abs-capture-time
+// values and returns the result as a Duration.
+//
+// This is a convenience function combining UnwrapAbsCaptureTime and duration conversion.
+func UnwrapAbsCaptureTimeDuration(prev, curr uint64) time.Duration {
+	delta := UnwrapAbsCaptureTime(prev, curr)
+	seconds := float64(delta) * AbsCaptureTimeResolution
+	return time.Duration(seconds * float64(time.Second))
+}
