@@ -12,7 +12,7 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 Phase: 2 of 4 (Rate Control & REMB)
 Plan: 3 of 6 in current phase
 Status: In progress
-Last activity: 2026-01-22 - Completed 02-03-PLAN.md
+Last activity: 2026-01-22 - Completed 02-02-PLAN.md (AIMD rate controller)
 
 Progress: [█████████░░░░░░░░░░░░░░] 39% (9/23 plans)
 
@@ -60,6 +60,9 @@ Recent decisions affecting current work:
 - Trendline detects TRENDS not absolute delays: constant input yields slope toward zero
 - **[NEW 02-01]** Use slice for RateStats samples (simpler than ring buffer, sufficient for 1s window)
 - **[NEW 02-01]** Return ok=false when elapsed < 1ms (avoids division precision issues)
+- **[NEW 02-02]** Multiplicative decrease uses measured incoming rate, not current estimate (GCC spec)
+- **[NEW 02-02]** Elapsed time capped at 1 second to prevent huge jumps after idle
+- **[NEW 02-02]** Ratio constraint: estimate <= 1.5 * incomingRate to prevent divergence
 - **[NEW 02-03]** Use pion/rtcp for REMB encoding (battle-tested mantissa+exponent implementation)
 
 ### Pending Todos
@@ -72,8 +75,8 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-01-22T16:07:27Z
-Stopped at: Completed 02-03-PLAN.md
+Last session: 2026-01-22T16:14:09Z
+Stopped at: Completed 02-02-PLAN.md
 Resume file: None
 
 ---
@@ -107,6 +110,8 @@ Resume file: None
 **Phase 2 API Surface (in progress):**
 - `RateStats` - Sliding window bitrate measurement
 - `NewRateStats(config) -> Update(bytes, time) -> Rate(time) -> (bps, ok)`
+- `RateController` - AIMD rate control state machine
+- `NewRateController(config) -> Update(signal, incomingRate, time) -> estimate`
 - `BuildREMB(senderSSRC, bitrate, mediaSSRCs)` - Create REMB packets
 - `ParseREMB(data)` - Parse REMB for testing
 
