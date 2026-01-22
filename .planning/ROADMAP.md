@@ -34,15 +34,15 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. Unit tests pass with synthetic packet traces that exercise wraparound, burst grouping, and state transition edge cases
   5. Monotonic time is used consistently throughout delay calculations (no wall clock leakage)
 
-**Plans**: 5-7 plans (TBD during planning)
+**Plans**: 6 plans in 4 waves
 
 Plans:
-- [ ] 01-01: Types, constants, and timestamp parsing (TIME-01, TIME-02, TIME-03)
-- [ ] 01-02: Inter-arrival time calculator with burst grouping (DELAY-01, DELAY-02, DELAY-03, DELAY-04)
-- [ ] 01-03: Kalman filter delay estimator (FILTER-01, FILTER-02)
-- [ ] 01-04: Trendline estimator alternative (FILTER-03)
-- [ ] 01-05: Overuse detector with adaptive threshold (DETECT-01, DETECT-02, DETECT-03, DETECT-04)
-- [ ] 01-06: Time handling and integration tests (PERF-03)
+- [ ] 01-01-PLAN.md — Types, constants, timestamp parsing with 64s wraparound (TIME-01, TIME-02)
+- [ ] 01-02-PLAN.md — Inter-arrival calculator with burst grouping (DELAY-01, DELAY-02, DELAY-03, DELAY-04)
+- [ ] 01-03-PLAN.md — Kalman filter delay estimator (FILTER-01, FILTER-02)
+- [ ] 01-04-PLAN.md — Trendline estimator alternative (FILTER-03)
+- [ ] 01-05-PLAN.md — Overuse detector with adaptive threshold (DETECT-01, DETECT-02, DETECT-03, DETECT-04)
+- [ ] 01-06-PLAN.md — Abs-capture-time, integration tests (TIME-03, PERF-03)
 
 ---
 
@@ -133,7 +133,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation & Core Pipeline | 0/6 | Not started | - |
+| 1. Foundation & Core Pipeline | 0/6 | Planned | - |
 | 2. Rate Control & REMB | 0/6 | Not started | - |
 | 3. Pion Integration | 0/6 | Not started | - |
 | 4. Optimization & Validation | 0/5 | Not started | - |
@@ -161,4 +161,4 @@ All 39 v1 requirements mapped to exactly one phase:
 ---
 
 *Roadmap created: 2026-01-22*
-*Last updated: 2026-01-22*
+*Last updated: 2026-01-22 after Phase 1 planning*
