@@ -46,7 +46,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **REMB-01**: Generate spec-compliant REMB RTCP packets (PT=206, FMT=15)
 - [ ] **REMB-02**: Encode bitrate correctly using mantissa+exponent format
 - [ ] **REMB-03**: Support configurable REMB send interval (default 1Hz)
-- [ ] **REMB-04**: Send REMB immediately on significant bandwidth decrease (≥3%)
+- [ ] **REMB-04**: Send REMB immediately on significant bandwidth decrease (>=3%)
 
 ### Core Library
 
@@ -154,10 +154,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | VALID-04 | Phase 4 | Pending |
 
 **Coverage:**
-- v1 requirements: 37 total
-- Mapped to phases: 37
-- Unmapped: 0 ✓
+- v1 requirements: 39 total
+- Mapped to phases: 39
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-01-22*
-*Last updated: 2026-01-22 after initial definition*
+*Last updated: 2026-01-22 after roadmap creation*
