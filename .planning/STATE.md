@@ -92,6 +92,9 @@ Recent decisions affecting current work:
 - **[NEW 03-06]** putPacketInfo resets all fields before returning to pool
 - **[NEW 03-06]** OnPacket takes PacketInfo by value, so dereference pooled pointer
 - **[NEW 03-06]** Integration tests use short REMB intervals (50ms) for faster execution
+- **[NEW 04-02]** PacketProcessor callback interface to avoid import cycles in testutil
+- **[NEW 04-02]** Synthetic traces skip strict VALID-01 threshold checks
+- **[NEW 04-02]** Reference estimates of 0 are skipped in divergence calculation (warmup period)
 - **[NEW 04-03]** 30ms extra delay for congestion simulation (matches existing test patterns)
 - **[NEW 04-03]** Three-phase TCP fairness methodology: 30s stable, 60s congested, 30s recovery
 - **[NEW 04-03]** Fair share thresholds: 10% min (no starvation), 90% max (appropriate backoff)
@@ -107,8 +110,8 @@ None - Phase 4 in progress.
 
 ## Session Continuity
 
-Last session: 2026-01-22T19:06:00Z
-Stopped at: Completed 04-03-PLAN.md (TCP Fairness Simulation)
+Last session: 2026-01-22T19:04:00Z
+Stopped at: Completed 04-02-PLAN.md (Reference Trace Validation) in parallel with 04-01, 04-03
 Resume file: None
 
 ---
@@ -220,12 +223,18 @@ All 7 Phase 3 requirements verified in TestPhase3_RequirementsVerification:
 - PERF-02: Use sync.Pool for packet metadata structures
 
 **Phase 4 Validation Progress:**
-- VALID-01: Delay detector accuracy [04-01 - COMPLETED]
-- VALID-02: Rate controller stability [04-02 - COMPLETED]
-- VALID-03: TCP fairness simulation [04-03 - COMPLETED]
+- 04-01: Performance benchmarks and PERF-01 validation [COMPLETED]
+  - Allocation benchmarks for core estimator and interceptor
+  - Escape analysis documentation for hot path optimization
+- 04-02: Reference trace validation infrastructure [COMPLETED]
+  - ReferenceTrace, TracedPacket, LoadTrace, Replay functions
+  - CalculateDivergence for VALID-01 comparison
+  - Synthetic trace generation for testing
+  - Sample trace at testdata/reference_congestion.json
+- 04-03: TCP fairness simulation (VALID-03) [COMPLETED]
   - Three-phase test (stable -> congested -> recovery)
   - Adaptive threshold K_u/K_d asymmetry (~55:1 ratio) verified
   - No gradual starvation under 5+ minutes congestion
   - Stable behavior under rapid transitions
-- VALID-04: Convergence speed benchmarks [04-04 - PENDING]
-- VALID-05: Final validation report [04-05 - PENDING]
+- 04-04: Convergence speed benchmarks [PENDING]
+- 04-05: Final validation report [PENDING]
