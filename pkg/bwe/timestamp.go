@@ -97,6 +97,15 @@ const AbsCaptureTimeResolution = 1.0 / (1 << 32) // ~2.33e-10 seconds per unit
 //
 // The abs-capture-time extension uses 64 bits, providing ~136 years of range
 // with sub-nanosecond precision.
+//
+// Deprecated: Use rtp.AbsCaptureTimeExtension.Unmarshal() from github.com/pion/rtp instead.
+// This function will be removed in v1.2. The Pion implementation is maintained upstream
+// and handles both 8-byte and 16-byte payloads (with optional clock offset). Example migration:
+//
+//	var ext rtp.AbsCaptureTimeExtension
+//	if err := ext.Unmarshal(data); err == nil {
+//	    captureTime = ext.Timestamp
+//	}
 func ParseAbsCaptureTime(data []byte) (uint64, error) {
 	if len(data) < 8 {
 		return 0, ErrInvalidAbsCaptureTime
