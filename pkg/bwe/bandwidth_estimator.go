@@ -3,6 +3,7 @@
 package bwe
 
 import (
+	"sync"
 	"time"
 
 	"bwe/pkg/bwe/internal"
@@ -36,6 +37,7 @@ func DefaultBandwidthEstimatorConfig() BandwidthEstimatorConfig {
 //   - RateController for AIMD-based bandwidth estimation
 //
 // This is a standalone core library with NO Pion dependencies.
+// BandwidthEstimator is safe for concurrent use from multiple goroutines.
 type BandwidthEstimator struct {
 	config         BandwidthEstimatorConfig
 	clock          internal.Clock
@@ -43,7 +45,11 @@ type BandwidthEstimator struct {
 	rateStats      *RateStats
 	rateController *RateController
 
-	// Current state
+	// Mutex protects concurrent access to state fields below.
+	// Required when multiple streams call OnPacket concurrently.
+	mu sync.Mutex
+
+	// Current state (protected by mu)
 	estimate int64
 	ssrcs    map[uint32]struct{} // Track seen SSRCs
 
@@ -79,7 +85,11 @@ func NewBandwidthEstimator(config BandwidthEstimatorConfig, clock internal.Clock
 //   - pkt: Packet information (arrival time, send time, size, SSRC)
 //
 // Returns the current bandwidth estimate in bits per second.
+// This method is safe for concurrent calls from multiple goroutines.
 func (e *BandwidthEstimator) OnPacket(pkt PacketInfo) int64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	// Track SSRC
 	e.ssrcs[pkt.SSRC] = struct{}{}
 
@@ -109,12 +119,16 @@ func (e *BandwidthEstimator) OnPacket(pkt PacketInfo) int64 {
 // GetEstimate returns the current bandwidth estimate in bits per second.
 // Call this at any time to get the latest estimate without processing a packet.
 func (e *BandwidthEstimator) GetEstimate() int64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	return e.estimate
 }
 
 // GetSSRCs returns the list of SSRCs seen so far.
 // This is useful for building REMB packets.
 func (e *BandwidthEstimator) GetSSRCs() []uint32 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	result := make([]uint32, 0, len(e.ssrcs))
 	for ssrc := range e.ssrcs {
 		result = append(result, ssrc)
@@ -124,23 +138,31 @@ func (e *BandwidthEstimator) GetSSRCs() []uint32 {
 
 // GetCongestionState returns the current congestion state.
 func (e *BandwidthEstimator) GetCongestionState() BandwidthUsage {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	return e.delayEstimator.State()
 }
 
 // GetRateControlState returns the current AIMD rate control state.
 func (e *BandwidthEstimator) GetRateControlState() RateControlState {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	return e.rateController.State()
 }
 
 // GetIncomingRate returns the measured incoming bitrate in bits per second.
 // Returns (rate, true) if available, (0, false) otherwise.
 func (e *BandwidthEstimator) GetIncomingRate() (int64, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	return e.rateStats.Rate(e.clock.Now())
 }
 
 // Reset resets the estimator to initial state.
 // Call this when switching streams or after extended silence.
 func (e *BandwidthEstimator) Reset() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.delayEstimator.Reset()
 	e.rateStats.Reset()
 	e.rateController.Reset()
@@ -154,6 +176,8 @@ func (e *BandwidthEstimator) Reset() {
 // SetREMBScheduler attaches a REMB scheduler to the estimator.
 // Once attached, MaybeBuildREMB can be used to generate REMB packets.
 func (e *BandwidthEstimator) SetREMBScheduler(scheduler *REMBScheduler) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.rembScheduler = scheduler
 }
 
@@ -167,13 +191,21 @@ func (e *BandwidthEstimator) SetREMBScheduler(scheduler *REMBScheduler) {
 // Multi-SSRC: The REMB packet includes ALL SSRCs seen by this estimator,
 // as receiver-side estimation produces ONE estimate for the entire session.
 func (e *BandwidthEstimator) MaybeBuildREMB(now time.Time) ([]byte, bool, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	if e.rembScheduler == nil {
 		return nil, false, nil // No scheduler, no REMB
 	}
 
-	ssrcs := e.GetSSRCs()
-	if len(ssrcs) == 0 {
+	if len(e.ssrcs) == 0 {
 		return nil, false, nil // No SSRCs seen yet
+	}
+
+	// Build SSRCs slice while holding lock
+	ssrcs := make([]uint32, 0, len(e.ssrcs))
+	for ssrc := range e.ssrcs {
+		ssrcs = append(ssrcs, ssrc)
 	}
 
 	return e.rembScheduler.MaybeSendREMB(e.estimate, ssrcs, now)
@@ -182,5 +214,7 @@ func (e *BandwidthEstimator) MaybeBuildREMB(now time.Time) ([]byte, bool, error)
 // GetLastPacketTime returns the arrival time of the last processed packet.
 // Useful for REMB scheduling when calling MaybeBuildREMB.
 func (e *BandwidthEstimator) GetLastPacketTime() time.Time {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	return e.lastPacketTime
 }
