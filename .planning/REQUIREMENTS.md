@@ -57,27 +57,29 @@ Deferred to future milestones.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BROWSER-01 | TBD | Pending |
-| BROWSER-02 | TBD | Pending |
-| BROWSER-03 | TBD | Pending |
-| NET-01 | TBD | Pending |
-| NET-02 | TBD | Pending |
-| NET-03 | TBD | Pending |
-| NET-04 | TBD | Pending |
-| INT-01 | TBD | Pending |
-| INT-02 | TBD | Pending |
-| INT-03 | TBD | Pending |
-| INT-04 | TBD | Pending |
-| CI-01 | TBD | Pending |
-| CI-02 | TBD | Pending |
-| CI-03 | TBD | Pending |
-| CI-04 | TBD | Pending |
+| BROWSER-01 | Phase 8 | Pending |
+| BROWSER-02 | Phase 8 | Pending |
+| BROWSER-03 | Phase 8 | Pending |
+| NET-01 | Phase 7 | Pending |
+| NET-02 | Phase 7 | Pending |
+| NET-03 | Phase 7 | Pending |
+| NET-04 | Phase 7 | Pending |
+| INT-01 | Phase 9 | Pending |
+| INT-02 | Phase 9 | Pending |
+| INT-03 | Phase 9 | Pending |
+| INT-04 | Phase 9 | Pending |
+| CI-01 | Phase 10 | Pending |
+| CI-02 | Phase 10 | Pending |
+| CI-03 | Phase 10 | Pending |
+| CI-04 | Phase 10 | Pending |
 
 **Coverage:**
 - v1.2 requirements: 15 total
-- Mapped to phases: 0
-- Unmapped: 15
+- Mapped to phases: 15
+- Unmapped: 0
+
+**Phase 6 Note:** Phase 6 (Test Infrastructure Foundation) has no direct requirements but is foundational infrastructure enabling Phases 7-10. Its success criteria are derived from what subsequent phases need to function.
 
 ---
 *Requirements defined: 2026-01-22*
-*Last updated: 2026-01-22 after initial definition*
+*Last updated: 2026-01-22 - Phase mappings added after roadmap creation*

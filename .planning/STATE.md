@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-01-22 - Milestone v1.2 started
+Phase: 6 - Test Infrastructure Foundation
+Plan: Not started
+Status: Phase planned, awaiting plan creation
+Last activity: 2026-01-22 - v1.2 roadmap created
 
-Progress: [░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 0% (v1.2 in progress)
+Progress: [##########################....] 50% (v1.0 + v1.1 complete, v1.2 in progress)
 
 ## Performance Metrics
 
@@ -41,6 +41,10 @@ Progress: [░░░░░░░░░░░░░░░░░░░░░░░
 - Phase 5 COMPLETE (3/3 plans)
 - All 11 requirements verified (EXT-01 through VAL-04)
 - Duration: 8 min total
+
+**v1.2 Status:**
+- Phases 6-10 planned (15 requirements across 5 phases)
+- Phase 6: Pending (Test Infrastructure Foundation)
 
 ## Accumulated Context
 
@@ -122,25 +126,48 @@ Recent decisions affecting current work:
 - **[05-03]** VAL-04 (Chrome interop) requires manual verification with browser
 - **[05-03]** Build error in chrome-interop fixed as prerequisite for VAL-01
 
+### v1.2 Research Context
+
+Key findings from research/SUMMARY.md:
+
+**Stack:**
+- Rod v0.116.2 for browser automation (simpler than chromedp, zero-alloc design)
+- Toxiproxy v2.12.0 for network simulation (TCP proxy with latency/bandwidth/jitter)
+- Docker chromedp/headless-shell for CI Chrome
+- Pion vnet for UDP simulation (Toxiproxy is TCP-only)
+
+**Architecture:**
+- `e2e/` directory with `//go:build e2e` tags
+- `pkg/bwe/testutil/browser.go` - BrowserClient wrapper
+- `pkg/bwe/testutil/network.go` - Toxiproxy helpers
+- Refactor `cmd/chrome-interop/` to importable server package
+
+**Critical pitfalls to address:**
+- Chrome version pinning in CI (prevent version mismatch)
+- Browser cleanup with defer patterns (prevent orphaned processes)
+- ICE timeouts increased for CI (30s disconnected, 60s failed)
+- Deterministic network simulation (seeded randomness)
+
 ### Pending Todos
 
 None yet.
 
 ### Blockers/Concerns
 
-None - v1.0 complete, v1.1 roadmap ready for planning.
+None - v1.2 roadmap ready for Phase 6 planning.
 
 ## Session Continuity
 
 Last session: 2026-01-22
-Stopped at: Completed 05-03-PLAN.md (Full validation - v1.1 COMPLETE)
+Stopped at: Created v1.2 roadmap (Phases 6-10)
 Resume file: None
+Next action: `/gsd:plan-phase 6`
 
 ---
 
 ## Quick Reference
 
-**Project Status:** v1.0 COMPLETE - v1.1 COMPLETE
+**Project Status:** v1.0 COMPLETE - v1.1 COMPLETE - v1.2 IN PROGRESS
 
 **v1.0 COMPLETE (Phases 1-4):**
 - Delay measurement with timestamp parsing [COMPLETED in 01-01]
@@ -180,111 +207,15 @@ Resume file: None
 - 24-hour soak test passes (VAL-03) [VERIFIED in 05-03]
 - Chrome interop still works (VAL-04) [MANUAL - requires browser]
 
-**Phase 1 API Surface:**
-- `DelayEstimator` - Main entry point
-- `OnPacket(PacketInfo) BandwidthUsage` - Process packet, get congestion state
-- `SetCallback(StateChangeCallback)` - Get notified on state changes
-- `BwNormal`, `BwUnderusing`, `BwOverusing` - Congestion states
+**v1.2 IN PROGRESS (Phases 6-10):**
 
-**Phase 2 API Surface (COMPLETE):**
-- `RateStats` - Sliding window bitrate measurement
-- `NewRateStats(config) -> Update(bytes, time) -> Rate(time) -> (bps, ok)`
-- `RateController` - AIMD rate control state machine
-- `NewRateController(config) -> Update(signal, incomingRate, time) -> estimate`
-- `BuildREMB(senderSSRC, bitrate, mediaSSRCs)` - Create REMB packets
-- `ParseREMB(data)` - Parse REMB for testing
-- `REMBScheduler` - REMB timing control
-- `NewREMBScheduler(config) -> MaybeSendREMB(estimate, ssrcs, time) -> (packet, sent, err)`
-- `BandwidthEstimator` - Main entry point combining all components
-- `NewBandwidthEstimator(config, clock) -> OnPacket(pkt) -> estimate`
-- `GetEstimate()`, `GetSSRCs()`, `GetCongestionState()`, `GetRateControlState()`
-- `GetIncomingRate()`, `Reset()`
-- `SetREMBScheduler(*REMBScheduler)` - Attach REMB scheduler
-- `MaybeBuildREMB(time.Time) ([]byte, bool, error)` - Build REMB if needed
-- `GetLastPacketTime() time.Time` - Get arrival time of last packet
-
-**Phase 3 API Surface (COMPLETE):**
-- `pkg/bwe/interceptor` package for Pion integration
-- `AbsSendTimeURI`, `AbsCaptureTimeURI` - Extension URI constants
-- `FindExtensionID(exts, uri)` - Extension ID lookup
-- `FindAbsSendTimeID(exts)`, `FindAbsCaptureTimeID(exts)` - Convenience functions
-- `streamState` (unexported) - Per-stream state tracking
-- `BWEInterceptor` - Main interceptor type embedding NoOp
-- `NewBWEInterceptor(estimator, opts...)` - Constructor with options
-- `BindRemoteStream(info, reader)` - Wraps RTPReader for packet observation
-- `BindRTCPWriter(writer)` - Captures writer and starts REMB loop
-- `Close()` - Signals shutdown and waits for all goroutines
-- `WithREMBInterval(d)`, `WithSenderSSRC(ssrc)` - Interceptor configuration options
-- `BWEInterceptorFactory` - Factory for interceptor.Registry integration
-- `NewBWEInterceptorFactory(opts...)` - Factory constructor
-- `WithInitialBitrate`, `WithMinBitrate`, `WithMaxBitrate` - Factory bitrate options
-- `WithFactoryREMBInterval`, `WithFactorySenderSSRC` - Factory REMB options
-- `getPacketInfo()`, `putPacketInfo()` - sync.Pool for PacketInfo (PERF-02)
-
-**Critical pitfalls handled in Phase 1:**
-- Adaptive threshold required (static causes TCP starvation) [HANDLED]
-- 24-bit timestamp wraparound at 64s [HANDLED]
-- Burst grouping for video traffic [HANDLED]
-- Monotonic time only (no wall clock) [HANDLED]
-
-**Critical pitfalls handled in Phase 2:**
-- AIMD decrease uses measured_incoming_rate (NOT current estimate) [02-02]
-- Rate increase max limited by max_rate_increase_bps_per_second [02-02]
-- Underuse -> hold rate (not increase) [02-02]
-- REMB mantissa+exponent encoding [HANDLED by pion/rtcp in 02-03]
-- Immediate REMB on decrease only (>=3%), not increase [02-04]
-- Standalone core library with no Pion dependencies [02-05]
-- Multi-SSRC aggregation: single estimate for all streams [02-06]
-
-**Critical pitfalls handled in Phase 3:**
-- Stream timeout with graceful cleanup after 2s inactivity [03-04]
-- Close() waits for all goroutines to complete [03-04]
-- Factory creates independent estimators (no shared state) [03-05]
-- sync.Pool for PacketInfo reduces GC pressure [03-06]
-
-**Phase 2 Requirements Verified:**
-All 12 Phase 2 requirements verified in TestPhase2_RequirementsVerification:
-- CORE-01 through CORE-04 (Standalone API)
-- RATE-01 through RATE-04 (AIMD controller)
-- REMB-01 through REMB-04 (REMB packets)
-
-**Phase 3 Requirements Verified:**
-All 7 Phase 3 requirements verified in TestPhase3_RequirementsVerification:
-- TIME-04: Auto-detect extension IDs from SDP negotiation
-- PION-01: Implement Pion Interceptor interface
-- PION-02: Implement BindRemoteStream for RTP packet observation
-- PION-03: Implement BindRTCPWriter for REMB packet output
-- PION-04: Handle stream timeout with graceful cleanup after 2s inactivity
-- PION-05: Provide InterceptorFactory for PeerConnection integration
-- PERF-02: Use sync.Pool for packet metadata structures
-
-**Phase 4 Validation Complete:**
-- 04-01: Performance benchmarks and PERF-01 validation [COMPLETED - 2026-01-22]
-  - Allocation benchmarks: 10 for core estimator, 6 for interceptor
-  - Core estimator: 0 allocs/op (PERF-01 MET)
-  - Interceptor: 2 allocs/op (atomic.Value + sync.Map - acceptable overhead)
-  - Escape analysis documented in benchmark_test.go files
-  - Key: atomic.Value.Store(time.Time) causes 1 alloc (interface boxing)
-- 04-02: Reference trace validation infrastructure [COMPLETED]
-  - ReferenceTrace, TracedPacket, LoadTrace, Replay functions
-  - CalculateDivergence for VALID-01 comparison
-  - Synthetic trace generation for testing
-  - Sample trace at testdata/reference_congestion.json
-- 04-03: TCP fairness simulation (VALID-03) [COMPLETED]
-  - Three-phase test (stable -> congested -> recovery)
-  - Adaptive threshold K_u/K_d asymmetry (~55:1 ratio) verified
-  - No gradual starvation under 5+ minutes congestion
-  - Stable behavior under rapid transitions
-- 04-04: Chrome interop test server (VALID-02) [COMPLETED - 2026-01-22]
-  - HTTP signaling server with embedded HTML test page
-  - REMB packets verified in chrome://webrtc-internals
-  - Chrome accepts REMB (500kbps → 900kbps+ adaptation observed)
-  - Critical bug fixes: thread-safety (sync.Mutex) + extension registration
-- 04-05: 24-hour soak test (VALID-04) [COMPLETED - 2026-01-22]
-  - Accelerated 24-hour test: 4.32M packets in ~1 second
-  - 1349 timestamp wraparounds without NaN/Inf/panic
-  - Memory bounded: HeapAlloc stays under 4 MB
-  - Real-time soak runner with pprof for production testing
+| Phase | Goal | Requirements | Status |
+|-------|------|--------------|--------|
+| 6 | Test Infrastructure Foundation | (foundational) | Pending |
+| 7 | Network Simulation | NET-01, NET-02, NET-03, NET-04 | Pending |
+| 8 | Browser Automation | BROWSER-01, BROWSER-02, BROWSER-03 | Pending |
+| 9 | Integration Tests | INT-01, INT-02, INT-03, INT-04 | Pending |
+| 10 | CI Integration | CI-01, CI-02, CI-03, CI-04 | Pending |
 
 ## v1.0 MILESTONE COMPLETE
 
@@ -326,4 +257,4 @@ All validation requirements verified:
 
 ---
 
-*Last updated: 2026-01-22 - Completed 05-03-PLAN.md - v1.1 COMPLETE*
+*Last updated: 2026-01-22 - v1.2 roadmap created, Phase 6 pending*
