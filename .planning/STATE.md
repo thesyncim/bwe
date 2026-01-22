@@ -5,35 +5,35 @@
 See: .planning/PROJECT.md (updated 2026-01-22)
 
 **Core value:** Generate accurate REMB feedback that matches libwebrtc/Chrome receiver behavior
-**Current focus:** Phase 2 - Rate Control (Plan 04 complete)
+**Current focus:** Phase 2 - Rate Control (Plan 05 complete)
 
 ## Current Position
 
 Phase: 2 of 4 (Rate Control & REMB)
-Plan: 4 of 6 in current phase
+Plan: 5 of 6 in current phase
 Status: In progress
-Last activity: 2026-01-22 - Completed 02-04-PLAN.md (REMB scheduler)
+Last activity: 2026-01-22 - Completed 02-05-PLAN.md (BandwidthEstimator API)
 
-Progress: [██████████░░░░░░░░░░░░░] 43% (10/23 plans)
+Progress: [███████████░░░░░░░░░░░░] 48% (11/23 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 10
+- Total plans completed: 11
 - Average duration: 3.3 min
-- Total execution time: 33 min
+- Total execution time: 36 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1. Foundation | 6/6 | 23 min | 3.8 min |
-| 2. Rate Control | 4/6 | 10 min | 2.5 min |
+| 2. Rate Control | 5/6 | 13 min | 2.6 min |
 | 3. Pion Integration | 0/6 | - | - |
 | 4. Validation | 0/5 | - | - |
 
 **Recent Trend:**
-- Last 6 plans: 01-05 (5 min), 01-06 (8 min), 02-01 (4 min), 02-02 (~2 min), 02-03 (5 min), 02-04 (2 min)
+- Last 6 plans: 01-06 (8 min), 02-01 (4 min), 02-02 (~2 min), 02-03 (5 min), 02-04 (2 min), 02-05 (3 min)
 - Trend: Phase 2 plans averaging faster due to smaller scope
 
 *Updated after each plan completion*
@@ -66,6 +66,8 @@ Recent decisions affecting current work:
 - **[NEW 02-03]** Use pion/rtcp for REMB encoding (battle-tested mantissa+exponent implementation)
 - **[NEW 02-04]** Immediate REMB only on decrease, not increase (prioritize congestion response)
 - **[NEW 02-04]** 3% default threshold balances responsiveness with packet overhead
+- **[NEW 02-05]** BandwidthEstimator wires components without adding complexity
+- **[NEW 02-05]** SSRC tracking via map for O(1) deduplication
 
 ### Pending Todos
 
@@ -77,15 +79,15 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-01-22T16:20:07Z
-Stopped at: Completed 02-04-PLAN.md
+Last session: 2026-01-22T16:21:10Z
+Stopped at: Completed 02-05-PLAN.md
 Resume file: None
 
 ---
 
 ## Quick Reference
 
-**Next action:** `/gsd:execute-plan 02-05` (Pion Interceptor integration)
+**Next action:** `/gsd:execute-plan 02-06` (REMB scheduling / end-to-end integration)
 
 **Phase 1 Complete:**
 - Delay measurement with timestamp parsing [COMPLETED in 01-01]
@@ -100,7 +102,7 @@ Resume file: None
 - AIMD rate controller [COMPLETED in 02-02]
 - REMB message generation [COMPLETED in 02-03]
 - REMB scheduling [COMPLETED in 02-04]
-- Pion Interceptor integration [PENDING 02-05]
+- BandwidthEstimator API [COMPLETED in 02-05]
 - End-to-end integration [PENDING 02-06]
 
 **Phase 1 API Surface:**
@@ -109,7 +111,7 @@ Resume file: None
 - `SetCallback(StateChangeCallback)` - Get notified on state changes
 - `BwNormal`, `BwUnderusing`, `BwOverusing` - Congestion states
 
-**Phase 2 API Surface (in progress):**
+**Phase 2 API Surface (complete):**
 - `RateStats` - Sliding window bitrate measurement
 - `NewRateStats(config) -> Update(bytes, time) -> Rate(time) -> (bps, ok)`
 - `RateController` - AIMD rate control state machine
@@ -118,6 +120,9 @@ Resume file: None
 - `ParseREMB(data)` - Parse REMB for testing
 - `REMBScheduler` - REMB timing control
 - `NewREMBScheduler(config) -> MaybeSendREMB(estimate, ssrcs, time) -> (packet, sent, err)`
+- `BandwidthEstimator` - Main entry point combining all components
+- `NewBandwidthEstimator(config, clock) -> OnPacket(pkt) -> estimate`
+- `GetEstimate()`, `GetSSRCs()`, `GetCongestionState()`, `GetRateControlState()`
 
 **Critical pitfalls handled in Phase 1:**
 - Adaptive threshold required (static causes TCP starvation) [HANDLED]
@@ -131,3 +136,4 @@ Resume file: None
 - Underuse -> hold rate (not increase) [02-02]
 - REMB mantissa+exponent encoding [HANDLED by pion/rtcp in 02-03]
 - Immediate REMB on decrease only (>=3%), not increase [02-04]
+- Standalone core library with no Pion dependencies [02-05]
