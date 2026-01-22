@@ -115,14 +115,14 @@ Plans:
   4. The estimator coexists fairly with TCP traffic (no starvation, appropriate backoff)
   5. 24-hour soak test completes without timestamp-related failures or memory leaks
 
-**Plans**: 5-7 plans (TBD during planning)
+**Plans**: 5 plans in 3 waves
 
 Plans:
-- [ ] 04-01: Allocation profiling and optimization (PERF-01)
-- [ ] 04-02: libwebrtc comparison test harness (VALID-01)
-- [ ] 04-03: Chrome interop testing (VALID-02)
-- [ ] 04-04: TCP fairness testing (VALID-03)
-- [ ] 04-05: Long-duration soak test (VALID-04)
+- [ ] 04-01-PLAN.md — Allocation profiling and benchmarks (PERF-01)
+- [ ] 04-02-PLAN.md — Reference trace comparison harness (VALID-01)
+- [ ] 04-03-PLAN.md — TCP fairness simulation tests (VALID-03)
+- [ ] 04-04-PLAN.md — Chrome interop test server (VALID-02) [checkpoint]
+- [ ] 04-05-PLAN.md — 24-hour soak test (VALID-04)
 
 ---
 
@@ -136,7 +136,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 | 1. Foundation & Core Pipeline | 6/6 | Complete | 2026-01-22 |
 | 2. Rate Control & REMB | 6/6 | Complete | 2026-01-22 |
 | 3. Pion Integration | 6/6 | Complete | 2026-01-22 |
-| 4. Optimization & Validation | 0/5 | Not started | - |
+| 4. Optimization & Validation | 0/5 | Planned | - |
 
 ---
 
@@ -161,4 +161,4 @@ All 39 v1 requirements mapped to exactly one phase:
 ---
 
 *Roadmap created: 2026-01-22*
-*Last updated: 2026-01-22 after Phase 3 execution complete*
+*Last updated: 2026-01-22 after Phase 4 planning complete*
