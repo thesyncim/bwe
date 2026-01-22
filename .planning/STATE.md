@@ -5,20 +5,20 @@
 See: .planning/PROJECT.md (updated 2026-01-22)
 
 **Core value:** Generate accurate REMB feedback that matches libwebrtc/Chrome receiver behavior
-**Current focus:** PROJECT COMPLETE - All phases and validation requirements verified
+**Current focus:** v1.1 Pion Type Adoption - Refactor to use Pion native extension types
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 5 - Pion Type Adoption
 Plan: —
-Status: Defining requirements for v1.1
-Last activity: 2026-01-22 - Starting milestone v1.1 (Pion Type Adoption)
+Status: Awaiting plan creation
+Last activity: 2026-01-22 - Roadmap created for v1.1
 
-Progress: [░░░░░░░░░░░░░░░░░░░░░░░░] 0% (v1.1 planning)
+Progress: [████████████████████████░] 80% (v1.0 complete, v1.1 planning)
 
 ## Performance Metrics
 
-**Velocity:**
+**Velocity (v1.0):**
 - Total plans completed: 23
 - Average duration: 4.3 min
 - Total execution time: 100 min
@@ -32,12 +32,15 @@ Progress: [░░░░░░░░░░░░░░░░░░░░░░░
 | 3. Pion Integration | 6/6 | 24 min | 4.0 min |
 | 4. Validation | 5/5 | 33 min | 6.6 min |
 
-**Final Summary:**
+**v1.0 Summary:**
 - All 4 phases completed successfully
 - All validation requirements verified (PERF-01, VALID-01, VALID-02, VALID-03, VALID-04)
 - BWE implementation matches libwebrtc/Chrome receiver behavior
 
-*Project complete - 2026-01-22*
+**v1.1 Status:**
+- Phase 5 roadmap created
+- 11 requirements defined (EXT-01 through VAL-04)
+- Awaiting plan creation via /gsd:plan-phase 5
 
 ## Accumulated Context
 
@@ -89,29 +92,29 @@ Recent decisions affecting current work:
 - **[03-05]** Separate factory options from interceptor options (WithFactory* prefix)
 - **[03-05]** Factory creates independent BandwidthEstimator per interceptor
 - **[03-05]** id parameter from Pion ignored (not needed for our implementation)
-- **[NEW 03-06]** Pool.New creates zero-value PacketInfo (clean state on first get)
-- **[NEW 03-06]** putPacketInfo resets all fields before returning to pool
-- **[NEW 03-06]** OnPacket takes PacketInfo by value, so dereference pooled pointer
-- **[NEW 03-06]** Integration tests use short REMB intervals (50ms) for faster execution
-- **[NEW 04-02]** PacketProcessor callback interface to avoid import cycles in testutil
-- **[NEW 04-02]** Synthetic traces skip strict VALID-01 threshold checks
-- **[NEW 04-02]** Reference estimates of 0 are skipped in divergence calculation (warmup period)
-- **[NEW 04-03]** 30ms extra delay for congestion simulation (matches existing test patterns)
-- **[NEW 04-03]** Three-phase TCP fairness methodology: 30s stable, 60s congested, 30s recovery
-- **[NEW 04-03]** Fair share thresholds: 10% min (no starvation), 90% max (appropriate backoff)
-- **[NEW 04-03]** Sustained congestion test runs 5+ simulated minutes to detect gradual starvation
-- **[NEW 04-01]** Core estimator 0 allocs/op is the target; interceptor 1-2 allocs/op acceptable
-- **[NEW 04-01]** atomic.Value.Store(time.Time) causes 1 alloc due to interface boxing
-- **[NEW 04-01]** Future optimization: Replace atomic.Value with atomic.Int64 for lastPacketTime
-- **[NEW 04-04]** Thread-safety via sync.Mutex essential for concurrent stream support (simulcast, multi-track)
-- **[NEW 04-04]** RTP header extensions must be explicitly registered in MediaEngine for SDP negotiation
-- **[NEW 04-04]** HTTP POST signaling simpler than WebSocket for test harnesses
-- **[NEW 04-04]** REMB logging wrapper pattern useful for manual verification
-- **[NEW 04-05]** 24-hour simulation uses MockClock for CI speed (completes in ~1 second)
-- **[NEW 04-05]** Hourly health checks verify memory < 100MB and estimate sanity
-- **[NEW 04-05]** Timestamp wraparound tests verify 1350+ wraparounds without failure
-- **[NEW 04-05]** Real-time soak runner uses ticker for actual timing (pprof-enabled)
-- **[NEW 04-05]** 5-minute status intervals in soak runner balance visibility with noise
+- **[03-06]** Pool.New creates zero-value PacketInfo (clean state on first get)
+- **[03-06]** putPacketInfo resets all fields before returning to pool
+- **[03-06]** OnPacket takes PacketInfo by value, so dereference pooled pointer
+- **[03-06]** Integration tests use short REMB intervals (50ms) for faster execution
+- **[04-02]** PacketProcessor callback interface to avoid import cycles in testutil
+- **[04-02]** Synthetic traces skip strict VALID-01 threshold checks
+- **[04-02]** Reference estimates of 0 are skipped in divergence calculation (warmup period)
+- **[04-03]** 30ms extra delay for congestion simulation (matches existing test patterns)
+- **[04-03]** Three-phase TCP fairness methodology: 30s stable, 60s congested, 30s recovery
+- **[04-03]** Fair share thresholds: 10% min (no starvation), 90% max (appropriate backoff)
+- **[04-03]** Sustained congestion test runs 5+ simulated minutes to detect gradual starvation
+- **[04-01]** Core estimator 0 allocs/op is the target; interceptor 1-2 allocs/op acceptable
+- **[04-01]** atomic.Value.Store(time.Time) causes 1 alloc due to interface boxing
+- **[04-01]** Future optimization: Replace atomic.Value with atomic.Int64 for lastPacketTime
+- **[04-04]** Thread-safety via sync.Mutex essential for concurrent stream support (simulcast, multi-track)
+- **[04-04]** RTP header extensions must be explicitly registered in MediaEngine for SDP negotiation
+- **[04-04]** HTTP POST signaling simpler than WebSocket for test harnesses
+- **[04-04]** REMB logging wrapper pattern useful for manual verification
+- **[04-05]** 24-hour simulation uses MockClock for CI speed (completes in ~1 second)
+- **[04-05]** Hourly health checks verify memory < 100MB and estimate sanity
+- **[04-05]** Timestamp wraparound tests verify 1350+ wraparounds without failure
+- **[04-05]** Real-time soak runner uses ticker for actual timing (pprof-enabled)
+- **[04-05]** 5-minute status intervals in soak runner balance visibility with noise
 
 ### Pending Todos
 
@@ -119,43 +122,57 @@ None yet.
 
 ### Blockers/Concerns
 
-None - PROJECT COMPLETE.
+None - v1.0 complete, v1.1 roadmap ready for planning.
 
 ## Session Continuity
 
-Last session: 2026-01-22T19:54:40Z
-Stopped at: Completed 04-05-SUMMARY.md (24-Hour Soak Test) - VALID-04 verified - MILESTONE COMPLETE
+Last session: 2026-01-22
+Stopped at: Created v1.1 roadmap (Phase 5: Pion Type Adoption)
 Resume file: None
 
 ---
 
 ## Quick Reference
 
-**Project Status:** COMPLETE - All phases and plans executed successfully
+**Project Status:** v1.0 COMPLETE - v1.1 in planning
 
-**Phase 1 COMPLETE:**
+**v1.0 COMPLETE (Phases 1-4):**
 - Delay measurement with timestamp parsing [COMPLETED in 01-01]
 - Burst grouping for bursty video traffic [COMPLETED in 01-02]
 - Kalman filter for noise reduction [COMPLETED in 01-03]
 - Trendline estimator as alternative filter [COMPLETED in 01-04]
 - Overuse detector with adaptive threshold [COMPLETED in 01-05]
 - Pipeline integration with DelayEstimator [COMPLETED in 01-06]
-
-**Phase 2 COMPLETE:**
 - Incoming bitrate measurement (RateStats) [COMPLETED in 02-01]
 - AIMD rate controller [COMPLETED in 02-02]
 - REMB message generation [COMPLETED in 02-03]
 - REMB scheduling [COMPLETED in 02-04]
 - BandwidthEstimator API [COMPLETED in 02-05]
 - End-to-end integration [COMPLETED in 02-06]
-
-**Phase 3 COMPLETE:**
 - Interceptor setup with extension helpers [COMPLETED in 03-01]
 - Core interceptor implementation [COMPLETED in 03-02]
 - BindRTCPWriter and REMB Loop [COMPLETED in 03-03]
 - Stream timeout and cleanup [COMPLETED in 03-04]
 - InterceptorFactory for registry integration [COMPLETED in 03-05]
 - Integration tests and sync.Pool optimization [COMPLETED in 03-06]
+- Performance benchmarks (0 allocs/op) [COMPLETED in 04-01]
+- Reference trace infrastructure [COMPLETED in 04-02]
+- TCP fairness validation [COMPLETED in 04-03]
+- Chrome interop test server [COMPLETED in 04-04]
+- 24-hour soak test [COMPLETED in 04-05]
+
+**v1.1 CURRENT (Phase 5):**
+- Use pion/rtp.AbsSendTimeExtension (EXT-01)
+- Use pion/rtp.AbsCaptureTimeExtension (EXT-02)
+- Remove custom ParseAbsSendTime() (EXT-03)
+- Remove custom ParseAbsCaptureTime() (EXT-04)
+- Retain UnwrapAbsSendTime() (KEEP-01)
+- Retain FindExtensionID() helpers (KEEP-02)
+- Retain custom inter-group delay calculation (KEEP-03)
+- All existing tests pass (VAL-01)
+- No allocation regression (VAL-02)
+- 24-hour soak test passes (VAL-03)
+- Chrome interop still works (VAL-04)
 
 **Phase 1 API Surface:**
 - `DelayEstimator` - Main entry point
@@ -235,7 +252,7 @@ All 7 Phase 3 requirements verified in TestPhase3_RequirementsVerification:
 - PION-05: Provide InterceptorFactory for PeerConnection integration
 - PERF-02: Use sync.Pool for packet metadata structures
 
-**Phase 4 Validation Progress:**
+**Phase 4 Validation Complete:**
 - 04-01: Performance benchmarks and PERF-01 validation [COMPLETED - 2026-01-22]
   - Allocation benchmarks: 10 for core estimator, 6 for interceptor
   - Core estimator: 0 allocs/op (PERF-01 MET)
@@ -263,7 +280,7 @@ All 7 Phase 3 requirements verified in TestPhase3_RequirementsVerification:
   - Memory bounded: HeapAlloc stays under 4 MB
   - Real-time soak runner with pprof for production testing
 
-## MILESTONE COMPLETE
+## v1.0 MILESTONE COMPLETE
 
 All validation requirements verified:
 
@@ -274,3 +291,11 @@ All validation requirements verified:
 | VALID-02 | PASS | 04-04 | Chrome interop (REMB accepted) |
 | VALID-03 | PASS | 04-03 | TCP fairness (no starvation) |
 | VALID-04 | PASS | 04-05 | 24-hour soak (no leaks/panics) |
+
+## v1.1 MILESTONE STARTED
+
+Phase 5 roadmap created. Ready for planning via `/gsd:plan-phase 5`.
+
+---
+
+*Last updated: 2026-01-22 - v1.1 roadmap created*

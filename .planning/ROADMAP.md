@@ -2,20 +2,24 @@
 
 ## Overview
 
-This roadmap delivers a Go port of libwebrtc's GCC delay-based receiver-side bandwidth estimator. The implementation progresses from core delay measurement and congestion detection (Phase 1), through rate control and REMB generation (Phase 2), to Pion WebRTC integration (Phase 3), and concludes with performance optimization and Chrome interoperability validation (Phase 4). Each phase builds on the previous, delivering testable capabilities at each boundary.
+This roadmap delivers a Go port of libwebrtc's GCC delay-based receiver-side bandwidth estimator across two milestones: v1.0 (Phases 1-4) implements the complete BWE pipeline from packet observation to REMB generation with Chrome interoperability. v1.1 (Phase 5) refactors the implementation to adopt Pion's native extension parsing types, reducing maintenance burden while preserving validated behavior and performance characteristics.
 
 ## Phases
 
 **Phase Numbering:**
-- Integer phases (1, 2, 3, 4): Planned milestone work
+- Integer phases (1, 2, 3, 4, 5): Planned milestone work
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
 Decimal phases appear between their surrounding integers in numeric order.
 
+**v1.0 (COMPLETE):**
 - [x] **Phase 1: Foundation & Core Pipeline** - Delay measurement, filtering, and congestion detection
 - [x] **Phase 2: Rate Control & REMB** - AIMD rate control, REMB output, and core API
 - [x] **Phase 3: Pion Integration** - Interceptor implementation and extension parsing
 - [x] **Phase 4: Optimization & Validation** - Performance tuning and Chrome interoperability
+
+**v1.1 (CURRENT):**
+- [ ] **Phase 5: Pion Type Adoption** - Adopt Pion extension types, validate no regressions
 
 ## Phase Details
 
@@ -126,10 +130,31 @@ Plans:
 
 ---
 
+### Phase 5: Pion Type Adoption
+
+**Goal**: Refactor BWE implementation to use Pion's native extension parsing types while preserving validated behavior and performance
+
+**Depends on**: Phase 4 (v1.0 complete)
+
+**Requirements**: EXT-01, EXT-02, EXT-03, EXT-04, KEEP-01, KEEP-02, KEEP-03, VAL-01, VAL-02, VAL-03, VAL-04
+
+**Success Criteria** (what must be TRUE):
+  1. RTP extension parsing delegates to pion/rtp.AbsSendTimeExtension and pion/rtp.AbsCaptureTimeExtension
+  2. Custom ParseAbsSendTime() and ParseAbsCaptureTime() functions are removed from codebase
+  3. Critical wraparound logic (UnwrapAbsSendTime) and extension discovery helpers (FindExtensionID) remain unchanged
+  4. All existing tests pass without modification (behavioral equivalence verified)
+  5. Benchmark suite shows 0 allocs/op for core estimator maintained (no allocation regression)
+  6. 24-hour accelerated soak test passes (timestamp wraparound handling preserved)
+  7. Chrome interop still works (REMB packets accepted, visible in webrtc-internals)
+
+**Plans**: TBD during planning
+
+---
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -137,14 +162,17 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 | 2. Rate Control & REMB | 6/6 | Complete | 2026-01-22 |
 | 3. Pion Integration | 6/6 | Complete | 2026-01-22 |
 | 4. Optimization & Validation | 5/5 | Complete | 2026-01-22 |
+| 5. Pion Type Adoption | 0/? | Not started | — |
 
-**MILESTONE COMPLETE** - All 23 plans across 4 phases executed successfully.
+**v1.0 MILESTONE COMPLETE** - All 23 plans across 4 phases executed successfully (2026-01-22).
+
+**v1.1 MILESTONE** - Phase 5 planning in progress.
 
 ---
 
 ## Requirement Coverage
 
-All 39 v1 requirements mapped to exactly one phase:
+**v1.0 (Complete):** All 39 requirements mapped to Phases 1-4:
 
 | Category | Phase 1 | Phase 2 | Phase 3 | Phase 4 | Total |
 |----------|---------|---------|---------|---------|-------|
@@ -160,7 +188,18 @@ All 39 v1 requirements mapped to exactly one phase:
 | VALID | 0 | 0 | 0 | 4 | 4 |
 | **Total** | **15** | **12** | **7** | **5** | **39** |
 
+**v1.1 (Current):** All 11 requirements mapped to Phase 5:
+
+| Category | Phase 5 | Total |
+|----------|---------|-------|
+| EXT | 4 | 4 |
+| KEEP | 3 | 3 |
+| VAL | 4 | 4 |
+| **Total** | **11** | **11** |
+
+**Combined Coverage:** 50 requirements across 5 phases (39 v1.0 + 11 v1.1)
+
 ---
 
 *Roadmap created: 2026-01-22*
-*Last updated: 2026-01-22 - MILESTONE COMPLETE*
+*Last updated: 2026-01-22 - v1.1 roadmap added (Phase 5)*
