@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/pion/interceptor"
+	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 
 	"bwe/pkg/bwe"
@@ -47,8 +48,9 @@ type BWEInterceptor struct {
 	senderSSRC   uint32
 
 	// Lifecycle
-	closed chan struct{}
-	wg     sync.WaitGroup
+	closed    chan struct{}
+	wg        sync.WaitGroup
+	startOnce sync.Once // Ensures cleanup loop starts only once
 }
 
 // InterceptorOption is a functional option for configuring BWEInterceptor.
@@ -211,7 +213,46 @@ func (i *BWEInterceptor) processRTP(raw []byte, ssrc uint32) {
 // It uses the configured rembInterval (default 1s).
 func (i *BWEInterceptor) rembLoop() {
 	defer i.wg.Done()
-	// Implementation in next task
+
+	ticker := time.NewTicker(i.rembInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-i.closed:
+			return
+		case now := <-ticker.C:
+			i.maybeSendREMB(now)
+		}
+	}
+}
+
+// maybeSendREMB checks if a REMB should be sent and sends it via the RTCPWriter.
+func (i *BWEInterceptor) maybeSendREMB(now time.Time) {
+	// Get REMB data using estimator's scheduler
+	data, shouldSend, err := i.estimator.MaybeBuildREMB(now)
+	if err != nil || !shouldSend || len(data) == 0 {
+		return
+	}
+
+	// Get writer under lock
+	i.mu.Lock()
+	writer := i.rtcpWriter
+	i.mu.Unlock()
+
+	if writer == nil {
+		return // Not bound yet, skip
+	}
+
+	// Parse bytes back to RTCP packet for RTCPWriter interface
+	// RTCPWriter.Write takes []rtcp.Packet, not raw bytes
+	pkts, err := rtcp.Unmarshal(data)
+	if err != nil {
+		return // Should never happen with our own REMB bytes
+	}
+
+	// Send REMB
+	_, _ = writer.Write(pkts, nil) // Ignore errors (network issues)
 }
 
 // cleanupLoop runs periodically to remove inactive streams.
