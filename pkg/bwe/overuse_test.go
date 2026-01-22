@@ -507,17 +507,24 @@ func TestOveruseDetector_OveruseCounterRequired(t *testing.T) {
 	// Initialize
 	detector.Detect(0)
 
-	// Even with enough time, need > 1 consecutive detection
-	clock.Advance(15 * time.Millisecond) // > 10ms but only 1 detection
+	// First detection above threshold - this starts the overuse tracking
+	clock.Advance(5 * time.Millisecond)
 	state := detector.Detect(20)
 	if state == BwOverusing {
-		t.Error("single detection should not trigger overuse even with sufficient time")
+		t.Error("single detection should not trigger overuse")
 	}
 
-	// Second consecutive detection should trigger
-	clock.Advance(1 * time.Millisecond)
+	// Second detection, but not enough time elapsed (only 5ms total from start)
+	clock.Advance(4 * time.Millisecond) // Total: 4ms since first detection
 	state = detector.Detect(21)
+	if state == BwOverusing {
+		t.Error("should not trigger overuse before 10ms sustained period")
+	}
+
+	// Third detection with enough time elapsed (>10ms from first detection)
+	clock.Advance(7 * time.Millisecond) // Total: 11ms since first detection
+	state = detector.Detect(22)
 	if state != BwOverusing {
-		t.Errorf("second consecutive detection: state = %v, want %v", state, BwOverusing)
+		t.Errorf("after sustained period with multiple detections: state = %v, want %v", state, BwOverusing)
 	}
 }
