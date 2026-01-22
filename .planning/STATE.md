@@ -118,8 +118,7 @@ Recent decisions affecting current work:
 - **[05-01]** Stack allocation via var ext Type (not new()) for 0 allocs/op
 - **[05-01]** Cast uint64 to uint32 for abs-send-time (24-bit fits safely)
 - **[05-01]** Retain UQ32.32 to 6.18 conversion logic (KEEP-03)
-- **[05-02]** v1.2 removal timeline for deprecated functions: signals stability
-- **[05-02]** Migration examples in deprecation comments for clear migration path
+- **[05-02]** Custom parse functions fully removed (not deprecated) - new project has no backwards compatibility concerns
 - **[05-03]** VAL-04 (Chrome interop) requires manual verification with browser
 - **[05-03]** Build error in chrome-interop fixed as prerequisite for VAL-01
 
@@ -171,8 +170,8 @@ Resume file: None
 **v1.1 COMPLETE (Phase 5):**
 - Use pion/rtp.AbsSendTimeExtension (EXT-01) [COMPLETED in 05-01]
 - Use pion/rtp.AbsCaptureTimeExtension (EXT-02) [COMPLETED in 05-01]
-- Deprecate custom ParseAbsSendTime() (EXT-03) [COMPLETED in 05-02]
-- Deprecate custom ParseAbsCaptureTime() (EXT-04) [COMPLETED in 05-02]
+- Remove custom ParseAbsSendTime() (EXT-03) [COMPLETED - fully removed]
+- Remove custom ParseAbsCaptureTime() (EXT-04) [COMPLETED - fully removed]
 - Retain UnwrapAbsSendTime() (KEEP-01) [VERIFIED in 05-03]
 - Retain FindExtensionID() helpers (KEEP-02) [VERIFIED in 05-03]
 - Retain custom inter-group delay calculation (KEEP-03) [VERIFIED in 05-03]
@@ -315,8 +314,8 @@ All validation requirements verified:
 |-------------|--------|------|-------------|
 | EXT-01 | PASS | 05-01 | Use pion/rtp.AbsSendTimeExtension |
 | EXT-02 | PASS | 05-01 | Use pion/rtp.AbsCaptureTimeExtension |
-| EXT-03 | PASS | 05-02 | Deprecate ParseAbsSendTime() |
-| EXT-04 | PASS | 05-02 | Deprecate ParseAbsCaptureTime() |
+| EXT-03 | PASS | 05-02 | Remove ParseAbsSendTime() |
+| EXT-04 | PASS | 05-02 | Remove ParseAbsCaptureTime() |
 | KEEP-01 | PASS | 05-03 | UnwrapAbsSendTime unchanged |
 | KEEP-02 | PASS | 05-03 | FindExtensionID helpers unchanged |
 | KEEP-03 | PASS | 05-03 | Inter-group delay calculation unchanged |

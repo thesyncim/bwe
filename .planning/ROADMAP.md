@@ -18,8 +18,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Pion Integration** - Interceptor implementation and extension parsing
 - [x] **Phase 4: Optimization & Validation** - Performance tuning and Chrome interoperability
 
-**v1.1 (CURRENT):**
-- [ ] **Phase 5: Pion Type Adoption** - Adopt Pion extension types, validate no regressions
+**v1.1 (COMPLETE):**
+- [x] **Phase 5: Pion Type Adoption** - Adopt Pion extension types, validate no regressions
 
 ## Phase Details
 
@@ -150,9 +150,9 @@ Plans:
 **Plans**: 3 plans in 3 waves
 
 Plans:
-- [ ] 05-01-PLAN.md — Adopt Pion extension types in interceptor processRTP (EXT-01, EXT-02)
-- [ ] 05-02-PLAN.md — Deprecate custom parsing functions (EXT-03, EXT-04)
-- [ ] 05-03-PLAN.md — Full validation suite (VAL-01, VAL-02, VAL-03, VAL-04, KEEP-01, KEEP-02, KEEP-03)
+- [x] 05-01-PLAN.md — Adopt Pion extension types in interceptor processRTP (EXT-01, EXT-02)
+- [x] 05-02-PLAN.md — Remove custom parsing functions (EXT-03, EXT-04)
+- [x] 05-03-PLAN.md — Full validation suite (VAL-01, VAL-02, VAL-03, VAL-04, KEEP-01, KEEP-02, KEEP-03)
 
 ---
 
@@ -167,11 +167,11 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 2. Rate Control & REMB | 6/6 | Complete | 2026-01-22 |
 | 3. Pion Integration | 6/6 | Complete | 2026-01-22 |
 | 4. Optimization & Validation | 5/5 | Complete | 2026-01-22 |
-| 5. Pion Type Adoption | 0/3 | Ready | — |
+| 5. Pion Type Adoption | 3/3 | Complete | 2026-01-22 |
 
 **v1.0 MILESTONE COMPLETE** - All 23 plans across 4 phases executed successfully (2026-01-22).
 
-**v1.1 MILESTONE** - Phase 5 planned (3 plans in 3 waves). Ready for execution.
+**v1.1 MILESTONE COMPLETE** - Phase 5 executed (3 plans in 3 waves). All requirements verified (2026-01-22).
 
 ---
 
@@ -193,7 +193,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | VALID | 0 | 0 | 0 | 4 | 4 |
 | **Total** | **15** | **12** | **7** | **5** | **39** |
 
-**v1.1 (Current):** All 11 requirements mapped to Phase 5:
+**v1.1 (Complete):** All 11 requirements mapped to Phase 5:
 
 | Category | Phase 5 | Total |
 |----------|---------|-------|
@@ -202,9 +202,9 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | VAL | 4 | 4 |
 | **Total** | **11** | **11** |
 
-**Combined Coverage:** 50 requirements across 5 phases (39 v1.0 + 11 v1.1)
+**Combined Coverage:** 50 requirements across 5 phases (39 v1.0 + 11 v1.1) — ALL COMPLETE
 
 ---
 
 *Roadmap created: 2026-01-22*
-*Last updated: 2026-01-22 - Phase 5 planned (3 plans)*
+*Last updated: 2026-01-22 - v1.1 MILESTONE COMPLETE*
