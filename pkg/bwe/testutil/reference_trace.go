@@ -1,5 +1,8 @@
 // Package testutil provides testing utilities for the bwe package.
 // This file provides reference trace replay infrastructure for validation testing.
+//
+// Note: This package is designed to avoid importing bwe to prevent import cycles.
+// Tests that use this package should handle the conversion to bwe.PacketInfo themselves.
 package testutil
 
 import (
@@ -9,7 +12,6 @@ import (
 	"os"
 	"time"
 
-	"bwe/pkg/bwe"
 	"bwe/pkg/bwe/internal"
 )
 
@@ -32,6 +34,12 @@ type TracedPacket struct {
 	// ReferenceEstimate is the expected bandwidth estimate from libwebrtc.
 	// A value of 0 means "unknown" or "not yet converged" (should be skipped in comparison).
 	ReferenceEstimate int64 `json:"reference_estimate"`
+}
+
+// ArrivalTime converts the arrival time from microseconds to time.Time.
+// Useful for initializing mock clocks at the trace start time.
+func (p TracedPacket) ArrivalTime() time.Time {
+	return time.Unix(0, p.ArrivalTimeUs*1000) // microseconds to nanoseconds
 }
 
 // ReferenceTrace represents a complete packet trace with reference estimates.
@@ -76,16 +84,24 @@ func LoadTrace(path string) (*ReferenceTrace, error) {
 	return &trace, nil
 }
 
-// Replay replays the trace through a bandwidth estimator and returns our estimates.
+// PacketProcessor is a function that processes a single packet and returns an estimate.
+// This allows the Replay method to work without depending on the bwe package.
+// The function should:
+//   - Accept the traced packet data
+//   - Process it through the estimator being tested
+//   - Return the bandwidth estimate
+type PacketProcessor func(arrivalTime time.Time, sendTime uint32, size int, ssrc uint32) int64
+
+// Replay replays the trace through a packet processor and returns the estimates.
 // The clock is advanced to match packet arrival times in the trace.
 //
 // Parameters:
-//   - estimator: The bandwidth estimator to test
+//   - processor: A function that processes packets and returns estimates
 //   - clock: A MockClock for deterministic replay
 //
-// Returns a slice of our bandwidth estimates, one per packet.
+// Returns a slice of bandwidth estimates, one per packet.
 // The slice has the same length as trace.Packets.
-func (t *ReferenceTrace) Replay(estimator *bwe.BandwidthEstimator, clock *internal.MockClock) []int64 {
+func (t *ReferenceTrace) Replay(processor PacketProcessor, clock *internal.MockClock) []int64 {
 	estimates := make([]int64, len(t.Packets))
 
 	// Track the start time for calculating arrival deltas
@@ -100,16 +116,11 @@ func (t *ReferenceTrace) Replay(estimator *bwe.BandwidthEstimator, clock *intern
 		}
 		lastArrivalUs = pkt.ArrivalTimeUs
 
-		// Create PacketInfo for the estimator
-		info := bwe.PacketInfo{
-			ArrivalTime: startTime.Add(time.Duration(pkt.ArrivalTimeUs) * time.Microsecond),
-			SendTime:    pkt.SendTime,
-			Size:        pkt.Size,
-			SSRC:        pkt.SSRC,
-		}
+		// Calculate actual arrival time
+		arrivalTime := startTime.Add(time.Duration(pkt.ArrivalTimeUs) * time.Microsecond)
 
 		// Process packet and record estimate
-		estimates[i] = estimator.OnPacket(info)
+		estimates[i] = processor(arrivalTime, pkt.SendTime, pkt.Size, pkt.SSRC)
 	}
 
 	return estimates
@@ -219,8 +230,8 @@ func GenerateSyntheticTrace(packetCount int, packetIntervalMs int, packetSize in
 	// Calculate incoming bitrate based on packet size and interval
 	// bitrate = (packetSize * 8) / (packetIntervalMs / 1000) = packetSize * 8 * 1000 / packetIntervalMs
 	stableBitrate := int64(packetSize * 8 * 1000 / packetIntervalMs)
-	congestionBitrate := stableBitrate * 60 / 100  // 60% of stable during congestion
-	recoveryBitrate := stableBitrate * 90 / 100    // 90% of stable during recovery
+	congestionBitrate := stableBitrate * 60 / 100 // 60% of stable during congestion
+	recoveryBitrate := stableBitrate * 90 / 100   // 90% of stable during recovery
 
 	var sendTimeUs int64 = 0
 
