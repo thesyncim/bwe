@@ -37,7 +37,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 6 plans in 4 waves
 
 Plans:
-- [ ] 01-01-PLAN.md — Types, constants, timestamp parsing with 64s wraparound (TIME-01, TIME-02)
+- [x] 01-01-PLAN.md — Types, constants, timestamp parsing with 64s wraparound (TIME-01, TIME-02)
 - [ ] 01-02-PLAN.md — Inter-arrival calculator with burst grouping (DELAY-01, DELAY-02, DELAY-03, DELAY-04)
 - [ ] 01-03-PLAN.md — Kalman filter delay estimator (FILTER-01, FILTER-02)
 - [ ] 01-04-PLAN.md — Trendline estimator alternative (FILTER-03)
@@ -133,7 +133,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation & Core Pipeline | 0/6 | Planned | - |
+| 1. Foundation & Core Pipeline | 1/6 | In progress | - |
 | 2. Rate Control & REMB | 0/6 | Not started | - |
 | 3. Pion Integration | 0/6 | Not started | - |
 | 4. Optimization & Validation | 0/5 | Not started | - |
