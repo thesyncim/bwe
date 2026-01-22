@@ -12,7 +12,7 @@ This roadmap delivers a Go port of libwebrtc's GCC delay-based receiver-side ban
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Foundation & Core Pipeline** - Delay measurement, filtering, and congestion detection
+- [x] **Phase 1: Foundation & Core Pipeline** - Delay measurement, filtering, and congestion detection
 - [ ] **Phase 2: Rate Control & REMB** - AIMD rate control, REMB output, and core API
 - [ ] **Phase 3: Pion Integration** - Interceptor implementation and extension parsing
 - [ ] **Phase 4: Optimization & Validation** - Performance tuning and Chrome interoperability
@@ -38,11 +38,11 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 Plans:
 - [x] 01-01-PLAN.md — Types, constants, timestamp parsing with 64s wraparound (TIME-01, TIME-02)
-- [ ] 01-02-PLAN.md — Inter-arrival calculator with burst grouping (DELAY-01, DELAY-02, DELAY-03, DELAY-04)
-- [ ] 01-03-PLAN.md — Kalman filter delay estimator (FILTER-01, FILTER-02)
-- [ ] 01-04-PLAN.md — Trendline estimator alternative (FILTER-03)
-- [ ] 01-05-PLAN.md — Overuse detector with adaptive threshold (DETECT-01, DETECT-02, DETECT-03, DETECT-04)
-- [ ] 01-06-PLAN.md — Abs-capture-time, integration tests (TIME-03, PERF-03)
+- [x] 01-02-PLAN.md — Inter-arrival calculator with burst grouping (DELAY-01, DELAY-02, DELAY-03, DELAY-04)
+- [x] 01-03-PLAN.md — Kalman filter delay estimator (FILTER-01, FILTER-02)
+- [x] 01-04-PLAN.md — Trendline estimator alternative (FILTER-03)
+- [x] 01-05-PLAN.md — Overuse detector with adaptive threshold (DETECT-01, DETECT-02, DETECT-03, DETECT-04)
+- [x] 01-06-PLAN.md — Abs-capture-time, integration tests (TIME-03, PERF-03)
 
 ---
 
@@ -61,15 +61,15 @@ Plans:
   4. The standalone Estimator API accepts packets and returns bandwidth estimates without any Pion dependencies
   5. Multiple concurrent SSRCs are supported with aggregated bandwidth estimation
 
-**Plans**: 5-7 plans (TBD during planning)
+**Plans**: 6 plans in 4 waves
 
 Plans:
-- [ ] 02-01: Sliding window bitrate measurement (RATE-03)
-- [ ] 02-02: AIMD rate controller state machine (RATE-01, RATE-02, RATE-04)
-- [ ] 02-03: REMB packet builder and encoding (REMB-01, REMB-02)
-- [ ] 02-04: REMB timing and immediate decrease (REMB-03, REMB-04)
-- [ ] 02-05: Standalone Estimator API (CORE-01, CORE-02, CORE-03)
-- [ ] 02-06: Multi-SSRC support and integration (CORE-04)
+- [ ] 02-01-PLAN.md — Sliding window bitrate measurement (RATE-03)
+- [ ] 02-02-PLAN.md — AIMD rate controller state machine (RATE-01, RATE-02, RATE-04)
+- [ ] 02-03-PLAN.md — REMB packet builder using pion/rtcp (REMB-01, REMB-02)
+- [ ] 02-04-PLAN.md — REMB scheduler with immediate decrease (REMB-03, REMB-04)
+- [ ] 02-05-PLAN.md — Standalone BandwidthEstimator API (CORE-01, CORE-02, CORE-03)
+- [ ] 02-06-PLAN.md — Multi-SSRC support and integration tests (CORE-04)
 
 ---
 
@@ -133,8 +133,8 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation & Core Pipeline | 1/6 | In progress | - |
-| 2. Rate Control & REMB | 0/6 | Not started | - |
+| 1. Foundation & Core Pipeline | 6/6 | Complete | 2026-01-22 |
+| 2. Rate Control & REMB | 0/6 | Ready | - |
 | 3. Pion Integration | 0/6 | Not started | - |
 | 4. Optimization & Validation | 0/5 | Not started | - |
 
@@ -161,4 +161,4 @@ All 39 v1 requirements mapped to exactly one phase:
 ---
 
 *Roadmap created: 2026-01-22*
-*Last updated: 2026-01-22 after Phase 1 planning*
+*Last updated: 2026-01-22 after Phase 2 planning*
