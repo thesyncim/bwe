@@ -1,440 +1,515 @@
-# Architecture Research: GCC Receiver-Side BWE
+# Architecture Research: Pion Type Integration Strategy
 
 **Project:** GCC Receiver-Side Bandwidth Estimator
+**Milestone:** v1.1 Pion Type Adoption
 **Researched:** 2026-01-22
-**Confidence:** HIGH (based on RFC draft, libwebrtc source structure, Pion interceptor docs)
+**Confidence:** HIGH
 
-## Component Overview
+## Executive Summary
 
-The GCC receiver-side bandwidth estimation system consists of five major components arranged in a processing pipeline:
+**Current state:** The BWE library has a "standalone core + interceptor adapter" design where `pkg/bwe` contains the GCC algorithm with NO Pion dependencies (9,110 lines), and `pkg/bwe/interceptor` provides the Pion integration layer.
 
-### 1. Arrival Time Filter (Inter-Arrival Module)
+**Exception:** `pkg/bwe/remb.go` ALREADY imports `github.com/pion/rtcp` (added in Phase 2, plan 02-03). This violates the original "standalone core" design but was a deliberate pragmatic decision.
 
-**Responsibility:** Compute inter-arrival time deltas and group packets into arrival clusters.
+**The question:** Should we continue relaxing this boundary to adopt more Pion types, or maintain the separation?
 
-**Input:**
-- RTP packet arrival timestamps (local clock)
-- Absolute capture timestamps (from RTP header extension)
+**Recommendation:** **Option B - Relax the boundary pragmatically.** Accept Pion types in core when they provide:
+1. Battle-tested marshalling/parsing (REMB, extensions)
+2. Type safety and interoperability
+3. Reduced maintenance burden
 
-**Output:**
-- Inter-group delay variation: `d(i) = t(i) - t(i-1) - (T(i) - T(i-1))`
-- Grouped packet arrivals (packets within 5ms or with negative delay variation are merged)
+The "standalone core" was a means to an end (testability, clean separation), not a religious principle. Pion's `rtcp` and `rtp` packages are stable, well-tested, and domain-appropriate dependencies.
 
-**Key behaviors:**
-- Pre-filters burst arrivals to reduce noise
-- Operates on packet groups, not individual packets
-- Does NOT require clock synchronization (only deltas matter)
+## Current Boundary Analysis
 
-### 2. Delay Gradient Estimator (Kalman Filter / Trendline Estimator)
-
-**Responsibility:** Estimate the queuing delay trend from noisy inter-arrival measurements.
-
-**Input:** Inter-group delay variations from arrival filter
-
-**Output:** Smoothed delay gradient estimate `m(i)` representing congestion level
-
-**Algorithm options:**
-- **Kalman filter** (original GCC): Scalar filter with state noise variance q=10^-3
-- **Trendline estimator** (modern libwebrtc): Linear regression over sliding window
-
-**Key behaviors:**
-- Exponential averaging of measurement noise variance
-- Outlier rejection: values exceeding 3*sqrt(variance) are clamped
-- Produces tracking error for threshold adaptation
-
-### 3. Overuse Detector (State Machine)
-
-**Responsibility:** Compare delay gradient against adaptive threshold and produce congestion signal.
-
-**Input:**
-- Delay gradient `m(i)` from estimator
-- Current threshold `del_var_th(i)`
-
-**Output:** Signal enum: `NORMAL`, `OVERUSE`, or `UNDERUSE`
-
-**State machine:**
-```
-OVERUSE:   m(i) > del_var_th(i) sustained for >= 10ms
-UNDERUSE:  m(i) < -del_var_th(i)
-NORMAL:    otherwise
-```
-
-**Adaptive threshold:**
-```
-del_var_th(i) = del_var_th(i-1) + delta_t * K(i) * (|m(i)| - del_var_th(i-1))
-
-where:
-  K(i) = K_u (0.01)    when |m(i)| > del_var_th(i-1)
-  K(i) = K_d (0.00018) when |m(i)| <= del_var_th(i-1)
-
-Initial: 12.5ms, clamped to [6ms, 600ms]
-```
-
-### 4. Rate Controller (AIMD)
-
-**Responsibility:** Adjust bandwidth estimate based on detector state using AIMD algorithm.
-
-**Input:**
-- Detector signal (OVERUSE/UNDERUSE/NORMAL)
-- Measured incoming bitrate `R_hat` (over 0.5-1 second window)
-
-**Output:** Estimated available bandwidth `A_hat` in bits per second
-
-**State machine:**
-
-| State | Condition | Action |
-|-------|-----------|--------|
-| INCREASE | NORMAL signal | Multiplicative: +8%/sec far from convergence; Additive: +0.5 packet per RTI near convergence |
-| DECREASE | OVERUSE signal | `A_hat = 0.85 * R_hat` |
-| HOLD | UNDERUSE signal | Maintain current estimate |
-
-**Constraints:**
-- `A_hat < 1.5 * R_hat` (prevents estimate diverging from actual rate)
-- Response time interval (RTI) = 100ms + RTT
-
-### 5. REMB Generator
-
-**Responsibility:** Package bandwidth estimate into REMB RTCP packet.
-
-**Input:**
-- Bandwidth estimate from rate controller
-- List of SSRCs to report on
-
-**Output:** REMB RTCP packet bytes
-
-**REMB packet format:**
-```
- 0                   1                   2                   3
- 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|V=2|P| FMT=15  |   PT=206      |             length            |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                  SSRC of packet sender                        |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                  SSRC of media source (0)                     |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|  Unique identifier 'R' 'E' 'M' 'B'                            |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|  Num SSRC     | BR Exp    |  BR Mantissa                      |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|   SSRC feedback (repeated Num SSRC times)                     |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
-Bitrate = BR_Mantissa * 2^BR_Exp (bits per second)
-```
-
-## Data Flow
+### What Exists Today
 
 ```
-                          STANDALONE CORE LIBRARY
-    +--------------------------------------------------------------------+
-    |                                                                    |
-    |   [RTP Packet + Abs Capture Time]                                  |
-    |            |                                                       |
-    |            v                                                       |
-    |   +------------------+     +------------------------+              |
-    |   | 1. Inter-Arrival | --> | 2. Delay Estimator     |              |
-    |   |    Filter        |     |    (Kalman/Trendline)  |              |
-    |   +------------------+     +------------------------+              |
-    |            |                         |                             |
-    |            |  packet groups          |  delay gradient m(i)        |
-    |            v                         v                             |
-    |   +------------------+     +------------------------+              |
-    |   | Rate Statistics  |     | 3. Overuse Detector    |              |
-    |   | (R_hat)          |     |    (State Machine)     |              |
-    |   +------------------+     +------------------------+              |
-    |            |                         |                             |
-    |            |  incoming bitrate       |  signal (OVER/UNDER/NORMAL) |
-    |            v                         v                             |
-    |   +------------------------------------------------+               |
-    |   | 4. AIMD Rate Controller                        |               |
-    |   |    - Increase/Decrease/Hold states             |               |
-    |   |    - Produces A_hat (bandwidth estimate)       |               |
-    |   +------------------------------------------------+               |
-    |            |                                                       |
-    |            v  bandwidth estimate                                   |
-    |   +------------------+                                             |
-    |   | 5. REMB Builder  |                                             |
-    |   +------------------+                                             |
-    |            |                                                       |
-    +------------|-------------------------------------------------------+
-                 v  REMB packet bytes
+pkg/bwe/                    # Core GCC algorithm (9,110 lines)
+├── types.go                # PacketInfo, BandwidthUsage (NO deps)
+├── timestamp.go            # Timestamp parsing (NO deps)
+├── interarrival.go         # Delay calculation (NO deps)
+├── trendline.go            # Filtering (NO deps)
+├── kalman.go               # Filtering (NO deps)
+├── overuse.go              # Congestion detection (NO deps)
+├── rate_controller.go      # AIMD (NO deps)
+├── rate_stats.go           # Bitrate measurement (NO deps)
+├── remb.go                 # ⚠️  REMB builder (IMPORTS pion/rtcp)
+├── remb_scheduler.go       # REMB scheduling (NO deps)
+├── estimator.go            # Delay estimator (NO deps)
+└── bandwidth_estimator.go  # Main facade (NO deps)
 
-                       PION INTERCEPTOR ADAPTER
-    +--------------------------------------------------------------------+
-    |                                                                    |
-    |   BindRemoteStream() -----------> Core.OnPacket(pkt, arrivalTime)  |
-    |                                                                    |
-    |   BindRTCPWriter() <------------- Core.GetREMB() -> RTCPWriter     |
-    |                                                                    |
-    |   Timer goroutine: periodically flush REMB to RTCPWriter           |
-    |                                                                    |
-    +--------------------------------------------------------------------+
+pkg/bwe/interceptor/        # Pion integration
+├── extension.go            # Extension ID helpers (pion/interceptor)
+├── interceptor.go          # RTP observation (pion/rtp, pion/rtcp, pion/interceptor)
+├── stream.go               # Stream state (NO Pion deps)
+├── pool.go                 # sync.Pool for PacketInfo (NO deps)
+└── factory.go              # InterceptorFactory (pion/interceptor)
 ```
 
-## libwebrtc Architecture Reference
+### Current Imports in Core
 
-### Source Location
-
-```
-chromium/src/third_party/webrtc/modules/remote_bitrate_estimator/
-```
-
-### Key Files (from BUILD.gn)
-
-| File | Component |
-|------|-----------|
-| `inter_arrival.h/cc` | Arrival Time Filter |
-| `overuse_estimator.h/cc` | Kalman filter for delay gradient |
-| `overuse_detector.h/cc` | Threshold comparison state machine |
-| `aimd_rate_control.h/cc` | AIMD rate controller |
-| `remote_bitrate_estimator_abs_send_time.h/cc` | Main estimator using abs-send-time |
-| `remote_bitrate_estimator_single_stream.h/cc` | Per-stream estimation |
-| `bwe_defines.h` | Shared constants and enums |
-| `remote_bitrate_estimator.h` (include/) | Main interface |
-
-### Class Hierarchy
-
-```
-RemoteBitrateEstimator (interface)
-    |
-    +-- RemoteBitrateEstimatorAbsSendTime
-    |       Uses: InterArrival, OveruseEstimator, OveruseDetector, AimdRateControl
-    |
-    +-- RemoteBitrateEstimatorSingleStream
-            Uses: InterArrival, OveruseEstimator, OveruseDetector, AimdRateControl
+```bash
+$ go list -f '{{.Imports}}' ./pkg/bwe
+errors
+github.com/pion/rtcp        # ⚠️  ALREADY PRESENT
+math
+sync
+time
+bwe/pkg/bwe/internal
 ```
 
-### Key Interface (from remote_bitrate_estimator.h)
+**Key observation:** The boundary is already crossed. `pkg/bwe/remb.go` imports `pion/rtcp` to use `rtcp.ReceiverEstimatedMaximumBitrate` for marshalling.
 
-```cpp
-class RemoteBitrateEstimator : public CallStatsObserver, public Module {
- public:
-  enum BandwidthUsage {
-    kBwNormal,
-    kBwUnderusing,
-    kBwOverusing
-  };
+### Why Was REMB Builder Put in Core?
 
-  // Called for each incoming RTP packet
-  virtual void IncomingPacket(int64_t arrival_time_ms,
-                              size_t payload_size,
-                              const RTPHeader& header) = 0;
-
-  // Remove stream data for SSRC
-  virtual void RemoveStream(uint32_t ssrc) = 0;
-
-  // Get latest bandwidth estimate
-  virtual bool LatestEstimate(std::vector<uint32_t>* ssrcs,
-                              uint32_t* bitrate_bps) const = 0;
-
-  // Set minimum bitrate
-  virtual void SetMinBitrate(int min_bitrate_bps) = 0;
-};
-```
-
-### Modern libwebrtc Notes
-
-Modern libwebrtc has shifted to sender-side estimation using TWCC, with `TrendlineEstimator` (linear regression) replacing the older Kalman filter in `GoogCcNetworkController`. However, the receiver-side components still exist for REMB compatibility.
-
-## Standalone Core vs Interceptor
-
-### Design Principle
-
-The core library should be pure algorithm with no Pion dependencies. This enables:
-- Unit testing algorithm logic without WebRTC infrastructure
-- Reuse in non-Pion contexts
-- Clear API boundary for the interceptor
-
-### Core Library Interface
+From Phase 2, plan 02-03 (REMB packet builder):
 
 ```go
-package gcc
-
-// Config holds estimator configuration
-type Config struct {
-    MinBitrate      uint64        // Minimum estimate (default: 30kbps)
-    MaxBitrate      uint64        // Maximum estimate (default: 10Mbps)
-    InitialBitrate  uint64        // Starting estimate (default: 300kbps)
+// BuildREMB creates a REMB RTCP packet from the given parameters.
+func BuildREMB(senderSSRC uint32, bitrateBps uint64, mediaSSRCs []uint32) ([]byte, error) {
+    pkt := &rtcp.ReceiverEstimatedMaximumBitrate{
+        SenderSSRC: senderSSRC,
+        Bitrate:    float32(bitrateBps),
+        SSRCs:      mediaSSRCs,
+    }
+    return pkt.Marshal()
 }
-
-// Estimator is the main entry point
-type Estimator struct {
-    // private fields
-}
-
-func NewEstimator(cfg Config) *Estimator
-
-// OnPacket processes an incoming RTP packet
-// arrivalTime: local monotonic timestamp in microseconds
-// sendTime: absolute capture time from RTP extension (NTP format)
-// payloadSize: RTP payload size in bytes
-// ssrc: RTP SSRC
-func (e *Estimator) OnPacket(arrivalTime int64, sendTime uint64, payloadSize int, ssrc uint32)
-
-// GetEstimate returns current bandwidth estimate in bits per second
-func (e *Estimator) GetEstimate() uint64
-
-// GetSSRCs returns list of active SSRCs
-func (e *Estimator) GetSSRCs() []uint32
-
-// Reset clears all state
-func (e *Estimator) Reset()
-
-// Optional: callback-based notification
-type EstimateCallback func(bitrateBps uint64)
-func (e *Estimator) OnEstimateChanged(cb EstimateCallback)
 ```
 
-### Pion Interceptor Adapter
+**Rationale from research notes:**
+> "Use pion/rtcp.ReceiverEstimatedMaximumBitrate"
+> "Do NOT hand-roll mantissa+exponent encoding"
+
+This was a **pragmatic decision:** Don't reinvent wire format encoding when a battle-tested library exists.
+
+## Options Analysis
+
+### Option A: Keep Boundary Strict (Pion Types Only in Interceptor)
+
+**What this means:**
+- Remove `pion/rtcp` import from `pkg/bwe/remb.go`
+- Move REMB marshalling to `pkg/bwe/interceptor`
+- Core returns structured data (e.g., `REMBData{Bitrate, SSRCs}`), interceptor marshals
+
+**Pros:**
+- Pure separation: Core is truly standalone
+- Core can be tested without any WebRTC dependencies
+- Could theoretically use core in non-WebRTC contexts
+
+**Cons:**
+- We'd have to revert existing working code that's been validated
+- Forces duplication: Core builds data structure, interceptor marshals it
+- Doesn't improve testability (current REMB tests work fine)
+- Adds complexity for theoretical purity
+- Still need to test marshalling somewhere (now in interceptor)
+
+**Impact on existing code:**
+```
+FILES TO MODIFY:
+- pkg/bwe/remb.go                   # Remove pion/rtcp, return struct
+- pkg/bwe/remb_test.go              # Update to test struct only
+- pkg/bwe/bandwidth_estimator.go    # Return REMBData instead of []byte
+- pkg/bwe/interceptor/interceptor.go # Add marshalling logic
+```
+
+**Verdict:** This is dogmatic purity. We already made the pragmatic choice in Phase 2.
+
+### Option B: Relax Boundary Pragmatically (Pion Types in Core) **[RECOMMENDED]**
+
+**What this means:**
+- Accept that `pion/rtcp` and `pion/rtp` are **domain dependencies**, not infrastructure
+- Keep REMB marshalling in core (status quo)
+- Add Pion extension types in core where they improve type safety
+- Maintain clean separation for algorithm logic (InterArrival, Kalman, AIMD, etc.)
+
+**Pros:**
+- Status quo for REMB (already works, already tested)
+- Reduces maintenance: Pion handles wire format edge cases
+- Better type safety: Use `rtcp.ReceiverEstimatedMaximumBitrate` instead of raw bytes
+- Easier interop: Core speaks the same types as Pion ecosystem
+- Still testable: Pion's RTCP/RTP packages are pure Go, no CGO, no external dependencies
+
+**Cons:**
+- Core is no longer "standalone" in the strict sense
+- Harder to port to non-Pion WebRTC stack (but who would do this?)
+- Adds Pion dependency to core (but it's a stable, well-maintained dependency)
+
+**What stays in core vs interceptor:**
+
+| Component | Location | Reasoning |
+|-----------|----------|-----------|
+| GCC algorithm (InterArrival, Kalman, AIMD) | Core | Pure algorithm logic, no domain types |
+| PacketInfo struct | Core | Domain type, but generic |
+| REMB marshalling | Core | Uses pion/rtcp (status quo) |
+| Extension parsing (abs-send-time) | Core | Domain operation, could use pion/rtp |
+| RTP packet observation | Interceptor | Pion-specific integration |
+| Stream lifecycle | Interceptor | Pion-specific integration |
+| RTCP writer binding | Interceptor | Pion-specific integration |
+
+**Impact on existing code:**
+```
+FILES TO MODIFY (for timestamp parsing improvements):
+- pkg/bwe/timestamp.go              # Optionally use pion/rtp helpers
+- pkg/bwe/timestamp_test.go         # Update tests
+
+FILES UNCHANGED (already use Pion):
+- pkg/bwe/remb.go                   # Already uses pion/rtcp
+- pkg/bwe/remb_test.go              # Already tests with pion/rtcp
+
+FILES UNCHANGED (pure algorithm):
+- pkg/bwe/interarrival.go
+- pkg/bwe/trendline.go
+- pkg/bwe/kalman.go
+- pkg/bwe/overuse.go
+- pkg/bwe/rate_controller.go
+- pkg/bwe/rate_stats.go
+- pkg/bwe/estimator.go
+- pkg/bwe/bandwidth_estimator.go
+```
+
+**Verdict:** This is the pragmatic path. Accept domain-level dependencies, reject infrastructure dependencies.
+
+### Option C: Split into Multiple Modules
+
+**What this means:**
+- Create separate Go modules:
+  - `bwe/core` - Pure algorithm, zero dependencies
+  - `bwe/types` - Shared types (maybe uses pion/rtcp)
+  - `bwe/pion` - Pion integration
+
+**Pros:**
+- Clear dependency boundaries enforced by Go module system
+- Users can import only what they need
+
+**Cons:**
+- Massive refactoring for no proven benefit
+- Complicates development (multi-module workspace)
+- Overkill for a library this size
+- Doesn't match user expectations (one import for BWE)
+
+**Verdict:** Over-engineering. Not appropriate for this codebase size.
+
+## Dependency Analysis: pion/rtcp and pion/rtp
+
+### What Are These Packages?
+
+From `go doc`:
+
+```
+package rtcp // import "github.com/pion/rtcp"
+
+RTCP marshaling and unmarshaling for RTP Control Protocol packets.
+Pure Go implementation, no CGO, no external dependencies.
+
+TYPES:
+  - ReceiverEstimatedMaximumBitrate (REMB)
+  - ReceiverReport, SenderReport
+  - TransportLayerNack, etc.
+```
+
+```
+package rtp // import "github.com/pion/rtp"
+
+RTP marshaling and unmarshaling for Real-time Transport Protocol packets.
+Pure Go implementation, handles header extensions, sequence numbers, etc.
+
+TYPES:
+  - Header (with extension parsing)
+  - Packet
+  - Extension handling
+```
+
+### Are These "Domain" or "Infrastructure"?
+
+**Domain dependencies** (acceptable in core):
+- Represent fundamental WebRTC/RTP concepts
+- Provide wire format correctness
+- Are stable, well-tested, pure Go
+
+**Infrastructure dependencies** (keep in adapter):
+- HTTP servers, databases
+- Pion PeerConnection, Interceptor interfaces
+- Anything with goroutines/state/lifecycle
+
+`pion/rtcp` and `pion/rtp` are **domain dependencies**. They're like `net/http` for HTTP headers or `encoding/json` for JSON - they represent the problem domain itself.
+
+### Stability and Maintenance
+
+```bash
+$ go list -m github.com/pion/rtcp
+github.com/pion/rtcp v1.2.16
+
+$ go list -m github.com/pion/rtp
+github.com/pion/rtp v1.10.0
+```
+
+- **pion/rtcp:** v1.2.16, mature, stable API, part of Pion ecosystem
+- **pion/rtp:** v1.10.0, mature, stable API, part of Pion ecosystem
+- Both are pure Go, no CGO, no system dependencies
+- Well-tested (used by thousands of Pion users)
+- Maintained by same team as pion/webrtc
+
+## Pragmatic Guideline: When to Accept Pion Deps in Core
+
+### Accept When:
+
+1. **Wire format marshalling/unmarshalling**
+   - Example: REMB packet encoding (mantissa+exponent is tricky)
+   - Reason: Don't reinvent binary protocols
+
+2. **RTP/RTCP type definitions**
+   - Example: Using `rtcp.ReceiverEstimatedMaximumBitrate` type
+   - Reason: Type safety and ecosystem compatibility
+
+3. **Extension parsing helpers**
+   - Example: abs-send-time, abs-capture-time extraction
+   - Reason: Pion's `rtp.Header.GetExtension` handles edge cases
+
+4. **Stable, pure-Go domain types**
+   - Reason: No runtime dependencies, just data structures and algorithms
+
+### Reject When:
+
+1. **Pion infrastructure types**
+   - Example: `interceptor.Interceptor`, `interceptor.RTCPWriter`
+   - Reason: These are integration points, belong in adapter
+
+2. **State/lifecycle management**
+   - Example: Stream tracking, timeout goroutines
+   - Reason: Core should be stateless functions/algorithms
+
+3. **Transport/network concerns**
+   - Example: RTCP sending, packet queueing
+   - Reason: Infrastructure concerns
+
+## Recommendation: Option B with Clear Guidelines
+
+### Adopt Pion Types in Core For:
+
+1. **REMB marshalling** (status quo)
+   - Keep `pion/rtcp` in `pkg/bwe/remb.go`
+   - Use `rtcp.ReceiverEstimatedMaximumBitrate`
+
+2. **Extension parsing improvements** (optional refinement)
+   - Consider using `pion/rtp.Header` helpers if they simplify timestamp parsing
+   - Current manual parsing in `timestamp.go` works, so LOW priority
+
+### Keep Pure Algorithm Logic Standalone:
+
+- InterArrival calculation
+- Kalman filter / Trendline estimator
+- Overuse detection
+- AIMD rate controller
+- Rate statistics
+
+These components have ZERO WebRTC-specific types - they operate on `time.Time`, `float64`, `int64`. Keep them pure.
+
+### Maintain Interceptor Separation:
+
+- RTP observation (`BindRemoteStream`)
+- RTCP sending (`BindRTCPWriter`)
+- Stream lifecycle
+- Pion interceptor interface implementation
+
+## Files Affected by Recommendation
+
+### No Changes Needed (Option B is Status Quo)
+
+```
+pkg/bwe/remb.go                     # Already uses pion/rtcp ✓
+pkg/bwe/bandwidth_estimator.go      # No changes needed ✓
+pkg/bwe/interceptor/interceptor.go  # No changes needed ✓
+```
+
+### Optional Refinements (LOW Priority)
+
+```
+pkg/bwe/timestamp.go                # Could use pion/rtp helpers (OPTIONAL)
+  Current: Manual 3-byte parsing works fine
+  Future: Consider pion/rtp.Extension helpers if they add value
+```
+
+## Testing Impact
+
+### Current Testing Strategy
+
+**Core tests** (no Pion needed, except remb.go):
+```bash
+$ go test ./pkg/bwe/...
+```
+- Tests use synthetic `PacketInfo` structs
+- REMB tests use `pion/rtcp` for round-trip verification
+- No goroutines, no network, pure unit tests
+
+**Interceptor tests** (need Pion):
+```bash
+$ go test ./pkg/bwe/interceptor/...
+```
+- Mock Pion interfaces
+- Test RTP observation flow
+- Test REMB sending
+
+### Impact of Option B (Recommended)
+
+**No change.** This is already how testing works. REMB tests already verify marshalling with `pion/rtcp`.
+
+### Impact of Option A (Strict Boundary)
+
+**Worse.** Would need to test REMB marshalling in interceptor layer, making it harder to unit test core functionality.
+
+## Architecture Principles (Updated)
+
+### Domain-Driven Design Perspective
+
+From recent architectural guidance ([Clean Architecture in Go](https://threedots.tech/post/introducing-clean-architecture/), [Hexagonal Architecture](https://skoredin.pro/blog/golang/hexagonal-architecture-go)):
+
+> "The domain layer should not depend on technical details like HTTP or SQL. But domain concepts - like RTCP packets in a WebRTC bandwidth estimator - are part of the domain, not infrastructure."
+
+**Applied to BWE:**
+- RTCP (REMB packets) = **Domain concept** (the algorithm produces REMB feedback)
+- RTP packets (timestamps, extensions) = **Domain concept** (the algorithm consumes RTP metadata)
+- PeerConnection, Interceptor interfaces = **Infrastructure** (how we integrate with Pion)
+
+### Pragmatic Clean Architecture
+
+From [Pragmatic Clean Architecture](https://blog.codewithram.dev/blog/clean-architecture-developer-journey.html):
+
+> "Be Pragmatic: Fit the architecture to the project — not the other way around. Every rule is bendable if it makes the system easier to work with."
+
+**Applied to BWE:**
+- Don't ban `pion/rtcp` just to satisfy "zero dependencies" purity
+- Do ban `pion/webrtc` or `pion/interceptor` in core (wrong layer)
+- Focus on **testability** and **maintainability**, not dogma
+
+### Updated Design Principle
+
+**Old principle (Phase 1):**
+> "Standalone core with NO Pion dependencies"
+
+**New principle (Post-Phase 2):**
+> "Algorithm-focused core with domain-level dependencies acceptable, infrastructure-level dependencies in adapter"
+
+**In practice:**
+- ✅ `pion/rtcp`, `pion/rtp` (domain types, wire formats)
+- ✅ `time`, `math`, `errors` (stdlib)
+- ❌ `pion/webrtc`, `pion/interceptor` (infrastructure)
+- ❌ HTTP, databases, anything with goroutines/state in core
+
+## Migration Path (if pursuing Option A)
+
+**IF** you wanted to enforce strict boundary (not recommended), here's the path:
+
+### Step 1: Define Core Interface
 
 ```go
-package gcc
+// pkg/bwe/remb.go
+package bwe
+
+type REMBData struct {
+    SenderSSRC uint32
+    Bitrate    uint64
+    SSRCs      []uint32
+}
+
+func BuildREMBData(senderSSRC uint32, bitrateBps uint64, ssrcs []uint32) REMBData {
+    return REMBData{SenderSSRC: senderSSRC, Bitrate: bitrateBps, SSRCs: ssrcs}
+}
+```
+
+### Step 2: Move Marshalling to Interceptor
+
+```go
+// pkg/bwe/interceptor/remb.go
+package interceptor
 
 import (
-    "github.com/pion/interceptor"
+    "bwe/pkg/bwe"
     "github.com/pion/rtcp"
 )
 
-// InterceptorFactory creates GCC interceptors
-type InterceptorFactory struct {
-    config Config
+func marshalREMB(data bwe.REMBData) ([]byte, error) {
+    pkt := &rtcp.ReceiverEstimatedMaximumBitrate{
+        SenderSSRC: data.SenderSSRC,
+        Bitrate:    float32(data.Bitrate),
+        SSRCs:      data.SSRCs,
+    }
+    return pkt.Marshal()
 }
-
-func NewInterceptorFactory(opts ...Option) (*InterceptorFactory, error)
-
-// Interceptor implements interceptor.Interceptor
-type Interceptor struct {
-    interceptor.NoOp  // Embed for defaults
-
-    estimator    *Estimator
-    rtcpWriter   interceptor.RTCPWriter
-    ssrcs        map[uint32]struct{}
-    rembInterval time.Duration
-}
-
-// BindRemoteStream captures incoming RTP for estimation
-func (i *Interceptor) BindRemoteStream(info *interceptor.StreamInfo, reader interceptor.RTPReader) interceptor.RTPReader
-
-// BindRTCPWriter captures the RTCP output channel
-func (i *Interceptor) BindRTCPWriter(writer interceptor.RTCPWriter) interceptor.RTCPWriter
-
-// Close stops the REMB generation goroutine
-func (i *Interceptor) Close() error
 ```
 
-### Absolute Capture Time Parsing
-
-The interceptor needs to parse the abs-capture-time RTP header extension:
+### Step 3: Update Estimator API
 
 ```go
-// AbsCaptureTime represents the parsed extension
-type AbsCaptureTime struct {
-    Timestamp   uint64  // NTP timestamp (UQ32.32 format)
-    ClockOffset int64   // Optional: estimated clock offset (two's complement)
+// pkg/bwe/bandwidth_estimator.go
+func (e *BandwidthEstimator) MaybeBuildREMB(now time.Time) (REMBData, bool, error) {
+    // Return struct instead of bytes
 }
-
-// ParseAbsCaptureTime extracts abs-capture-time from RTP header extensions
-// Extension URI: "http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time"
-func ParseAbsCaptureTime(extensions []rtp.Extension, extensionID uint8) (*AbsCaptureTime, bool)
 ```
 
-## Suggested Build Order
+### Step 4: Update Interceptor
 
-Based on component dependencies, build in this order:
+```go
+// pkg/bwe/interceptor/interceptor.go
+func (i *Interceptor) maybeSendREMB(now time.Time) {
+    data, shouldSend, err := i.estimator.MaybeBuildREMB(now)
+    if err != nil || !shouldSend {
+        return
+    }
 
-### Phase 1: Foundation (No Dependencies)
+    // Marshal here
+    bytes, err := marshalREMB(data)
+    // ... send
+}
+```
 
-**1.1 Types and Constants**
-- Define `BandwidthUsage` enum (Normal, Overusing, Underusing)
-- Define configuration struct with GCC-compliant defaults
-- Define threshold constants (K_u=0.01, K_d=0.00018, initial_threshold=12.5ms)
+**Estimated effort:** 4-6 hours (modify 4 files, update all tests, verify behavior unchanged)
 
-**1.2 REMB Packet Builder**
-- Encode bitrate to mantissa+exponent
-- Build REMB packet bytes
-- *Why first:* Simple, well-specified, easy to test against Pion's existing RTCP library
+**Value proposition:** Theoretical purity, no practical benefit
 
-### Phase 2: Core Estimation Pipeline
-
-**2.1 Inter-Arrival Filter**
-- Track arrival times and send times
-- Compute inter-arrival deltas
-- Group packets (burst detection)
-- *Depends on:* Types
-
-**2.2 Delay Estimator (Kalman Filter)**
-- Implement scalar Kalman filter
-- Track measurement noise variance
-- Produce smoothed delay gradient
-- *Depends on:* Types, Inter-Arrival
-
-**2.3 Overuse Detector**
-- Compare gradient to adaptive threshold
-- Implement threshold adaptation
-- State machine for sustained overuse detection
-- *Depends on:* Delay Estimator, Types
-
-### Phase 3: Rate Control
-
-**3.1 Rate Statistics**
-- Track incoming bitrate over sliding window
-- Compute R_hat (measured rate)
-- *Depends on:* Types
-
-**3.2 AIMD Rate Controller**
-- Implement increase/decrease/hold states
-- Integrate detector signals with rate statistics
-- Produce final bandwidth estimate
-- *Depends on:* Overuse Detector, Rate Statistics
-
-### Phase 4: Integration
-
-**4.1 Estimator Facade**
-- Wire all components together
-- Expose clean public API
-- Handle multi-SSRC aggregation
-- *Depends on:* All Phase 2-3 components
-
-**4.2 Abs-Capture-Time Parser**
-- Parse RTP header extension
-- Handle both 8-byte and 16-byte variants
-- *Depends on:* None (can be built in parallel)
-
-### Phase 5: Pion Integration
-
-**5.1 Interceptor Implementation**
-- Implement `interceptor.Interceptor` interface
-- Bind to remote streams
-- Parse abs-capture-time from incoming RTP
-- *Depends on:* Estimator Facade, Abs-Capture-Time Parser
-
-**5.2 REMB Sender Goroutine**
-- Periodic REMB generation (default: 1 second)
-- Bind to RTCPWriter
-- Handle shutdown gracefully
-- *Depends on:* Interceptor, REMB Builder
-
-### Phase 6: Validation
-
-**6.1 Conformance Testing**
-- Capture traces from Chrome/libwebrtc
-- Compare estimates under identical packet sequences
-- *Depends on:* Full implementation
+**Recommendation:** Don't do this. Status quo (Option B) is better.
 
 ## Sources
 
-**RFC/Standards:**
-- [draft-ietf-rmcat-gcc-02 - Google Congestion Control Algorithm](https://datatracker.ietf.org/doc/html/draft-ietf-rmcat-gcc-02)
-- [draft-alvestrand-rmcat-remb - REMB RTCP Message](https://datatracker.ietf.org/doc/html/draft-alvestrand-rmcat-remb)
-- [Absolute Capture Time Extension](https://webrtc.googlesource.com/src/+/refs/heads/main/docs/native-code/rtp-hdrext/abs-capture-time/README.md)
+**Go Architecture Patterns:**
+- [Managing dependencies - The Go Programming Language](https://go.dev/doc/modules/managing-dependencies)
+- [Standard Go Project Layout](https://github.com/golang-standards/project-layout)
+- [Organizing a Go module](https://go.dev/doc/modules/layout)
 
-**libwebrtc Documentation:**
-- [Remote Bitrate Estimator Tutorial](https://www.fanyamin.com/webrtc/tutorial/build/html/4.code/remote_bitrate_estimator.html)
-- [WebRTC GCC Tutorial](https://www.fanyamin.com/webrtc/tutorial/build/html/4.code/webrtc_gcc.html)
-- [webrtc-mirror BUILD.gn](https://github.com/pristineio/webrtc-mirror/blob/master/webrtc/modules/remote_bitrate_estimator/BUILD.gn)
+**Clean Architecture & Hexagonal Design:**
+- [Clean Architecture in Go: A Practical Guide](https://threedots.tech/post/introducing-clean-architecture/)
+- [Hexagonal Architecture in Go](https://skoredin.pro/blog/golang/hexagonal-architecture-go)
+- [Pragmatic Clean Architecture](https://blog.codewithram.dev/blog/clean-architecture-developer-journey.html)
+- [DDD, Hexagonal, Onion, Clean, CQRS Combined](https://herbertograca.com/2017/11/16/explicit-architecture-01-ddd-hexagonal-onion-clean-cqrs-how-i-put-it-all-together/)
 
-**Pion:**
-- [pion/interceptor Repository](https://github.com/pion/interceptor)
-- [Interceptor Package Documentation](https://pkg.go.dev/github.com/pion/interceptor)
-- [Bandwidth Estimator Issue #25](https://github.com/pion/interceptor/issues/25)
+**Pion Architecture:**
+- [Pion WebRTC Big Ideas](https://github.com/pion/webrtc/wiki/Big-Ideas)
+- [Interceptors Design Discussion](https://github.com/pion/webrtc-v3-design/issues/34)
+- [pion/interceptor Package Documentation](https://pkg.go.dev/github.com/pion/interceptor)
+
+**Project History:**
+- `.planning/phases/02-rate-control-remb/02-03-PLAN.md` - Original REMB builder plan
+- `.planning/PROJECT.md` - Project context and key decisions
+- `.planning/research/ARCHITECTURE.md` (v1.0) - Original architecture design
+
+## Conclusion
+
+**Recommendation: Option B - Relax boundary pragmatically.**
+
+The boundary was already crossed in Phase 2 when we added `pion/rtcp` to core for REMB marshalling. This was the right decision then, and it remains the right decision now.
+
+**Guiding principle:**
+> Accept domain-level dependencies (`pion/rtcp`, `pion/rtp`), reject infrastructure-level dependencies (`pion/interceptor`, `pion/webrtc`).
+
+**What this means for v1.1 milestone:**
+- Keep REMB marshalling in core (status quo)
+- Feel free to use Pion types where they improve type safety and reduce maintenance
+- Keep algorithm logic pure (InterArrival, Kalman, AIMD)
+- Keep integration logic in interceptor layer
+
+**Files to modify:** Likely ZERO. Current architecture already follows this principle.
+
+**Next steps:**
+1. Review this research with team
+2. Update PROJECT.md to reflect "domain dependencies acceptable" principle
+3. Proceed with v1.1 refactoring using Pion types confidently

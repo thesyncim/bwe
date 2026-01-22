@@ -1,454 +1,544 @@
-# Features Research: GCC Receiver-Side BWE
+# Features Research: Pion Types for BWE Refactoring
 
-**Domain:** WebRTC delay-based bandwidth estimation (receiver-side)
+**Domain:** RTP/RTCP packet handling for BWE
 **Researched:** 2026-01-22
-**Reference:** RFC draft-ietf-rmcat-gcc-02, libwebrtc source
+**Confidence:** HIGH
 
 ## Executive Summary
 
-A GCC delay-based receiver-side bandwidth estimator consists of interconnected components that observe RTP packets, analyze inter-arrival timing patterns, detect network congestion, and generate REMB feedback. The core pipeline is: **Packet Reception -> Inter-Arrival Analysis -> Kalman/Trendline Filtering -> Overuse Detection -> Rate Control -> REMB Generation**.
+This research compares Pion's RTCP REMB and RTP extension types against the current BWE implementation to identify what functionality they provide, edge cases they handle, and any gaps. The goal is to inform the refactoring decision for adopting Pion types.
 
-Table stakes components are required for Chrome/libwebrtc interoperability. Differentiators improve estimation quality but are not required for basic operation.
-
----
-
-## Table Stakes
-
-**Must-have components for a working implementation that interoperates with libwebrtc/Chrome.**
-
-### 1. Absolute Send Time (abs-send-time) Parser
-| Aspect | Detail |
-|--------|--------|
-| **What** | Parse RTP header extension containing 24-bit NTP-derived timestamp |
-| **Format** | 6.18 fixed-point, ~3.8us resolution, 64s wraparound |
-| **Encoding** | `abs_send_time_24 = (ntp_timestamp_64 >> 14) & 0x00ffffff` |
-| **Complexity** | Low |
-| **Why critical** | Without abs-send-time, no delay measurement is possible. REMB-based BWE requires this extension. |
-
-**Sources:** [abs-send-time spec](https://webrtc.googlesource.com/src/+/main/docs/native-code/rtp-hdrext/abs-send-time/README.md), [WebRTC header extensions](http://www.rtcbits.com/2023/05/webrtc-header-extensions.html)
-
-### 2. Inter-Arrival Time Calculator
-| Aspect | Detail |
-|--------|--------|
-| **What** | Compute delay variation between packet groups |
-| **Formula** | `d(i) = (t(i) - t(i-1)) - (T(i) - T(i-1))` where t=receive time, T=send time |
-| **Complexity** | Low-Medium |
-| **Why critical** | Core signal that feeds the overuse detector. Delay gradient is the primary congestion indicator. |
-
-**Notes:**
-- Must handle abs-send-time 64-second wraparound correctly
-- Negative propagation delta indicates burst arrival (packets queued then released)
-
-### 3. Packet Group Aggregation (Burst Grouping)
-| Aspect | Detail |
-|--------|--------|
-| **What** | Group packets sent within burst interval for collective analysis |
-| **Threshold** | `kBurstDeltaThresholdMs = 5ms` (packets sent <5ms apart = same group) |
-| **Max duration** | `kMaxBurstDurationMs = 100ms` |
-| **Complexity** | Low-Medium |
-| **Why critical** | Reduces noise by treating bursty sends as single measurement unit. Without this, per-packet jitter overwhelms the signal. |
-
-**Sources:** [draft-ietf-rmcat-gcc-02](https://datatracker.ietf.org/doc/html/draft-ietf-rmcat-gcc-02), [inter_arrival.cc](https://github.com/webrtc-uwp/webrtc/blob/master/modules/remote_bitrate_estimator/inter_arrival.cc)
-
-### 4. Arrival-Time Filter (Kalman or Trendline)
-| Aspect | Detail |
-|--------|--------|
-| **What** | Filter noise from delay measurements to estimate true delay gradient m(i) |
-| **Options** | Scalar Kalman filter (REMB-GCC) or Trendline estimator (TFB-GCC) |
-| **Output** | Smoothed delay gradient estimate |
-| **Complexity** | Medium-High |
-| **Why critical** | Raw delay measurements are noisy. Filter extracts signal from noise. |
-
-**Kalman Filter Parameters (from draft):**
-| Parameter | Value | Description |
-|-----------|-------|-------------|
-| q | 10^-3 | State noise variance |
-| e(0) | 0.1 | Initial error covariance |
-| chi | 0.1 - 0.001 | Measurement noise coefficient |
-
-**Kalman Recursion:**
-```
-z(i) = d(i) - m_hat(i-1)           // Innovation
-m_hat(i) = m_hat(i-1) + z(i) * k(i)  // State update
-k(i) = (e(i-1) + q) / (var_v + e(i-1) + q)  // Kalman gain
-e(i) = (1 - k(i)) * (e(i-1) + q)   // Error covariance update
-```
-
-**Sources:** [draft-ietf-rmcat-gcc-02 Section 5](https://datatracker.ietf.org/doc/html/draft-ietf-rmcat-gcc-02), [OveruseEstimator](https://asplingzhang.github.io/webrtc/RBE-in-WebRTC/)
-
-### 5. Overuse Detector
-| Aspect | Detail |
-|--------|--------|
-| **What** | Compare filtered delay gradient against threshold to determine network state |
-| **States** | `kBwNormal`, `kBwOverusing`, `kBwUnderusing` |
-| **Complexity** | Medium |
-| **Why critical** | Translates delay signal into actionable congestion state that drives rate control. |
-
-**Detection Logic:**
-- **Overuse:** `m(i) > threshold` for >= 10ms AND `m(i) >= m(i-1)`
-- **Underuse:** `m(i) < -threshold`
-- **Normal:** Neither condition met
-
-**Threshold Parameters:**
-| Parameter | Value | Description |
-|-----------|-------|-------------|
-| del_var_th(0) | 12.5ms | Initial threshold |
-| Threshold range | [6ms, 600ms] | Clamp bounds |
-| overuse_time_th | 10ms | Time in overuse before signaling |
-
-**Sources:** [draft-ietf-rmcat-gcc-02 Section 5.3](https://datatracker.ietf.org/doc/html/draft-ietf-rmcat-gcc-02)
-
-### 6. Adaptive Threshold
-| Aspect | Detail |
-|--------|--------|
-| **What** | Dynamically adjust overuse detection threshold based on conditions |
-| **Why needed** | Static threshold causes starvation when competing with TCP flows |
-| **Complexity** | Medium |
-| **Why critical** | Without adaptation, GCC flows get starved by loss-based (TCP) traffic. |
-
-**Update Formula:**
-```
-del_var_th(i) = del_var_th(i-1) + delta_t * K(i) * (|m(i)| - del_var_th(i-1))
-```
-Where:
-- `K(i) = K_u` if `|m(i)| >= del_var_th(i-1)`, else `K_d`
-- `K_u = 0.01` (increase rate)
-- `K_d = 0.00018` (decrease rate)
-
-**Skip condition:** Don't update if `|m(i)| - del_var_th(i) > 15`
-
-**Sources:** [GCC Analysis Paper](https://c3lab.poliba.it/images/6/65/Gcc-analysis.pdf), [draft-ietf-rmcat-gcc-02](https://datatracker.ietf.org/doc/html/draft-ietf-rmcat-gcc-02)
-
-### 7. AIMD Rate Controller
-| Aspect | Detail |
-|--------|--------|
-| **What** | Compute target bitrate using Additive Increase / Multiplicative Decrease |
-| **States** | Increase, Hold, Decrease |
-| **Complexity** | Medium |
-| **Why critical** | Translates overuse signal into actual bandwidth estimate value. |
-
-**Rate Control Logic:**
-
-| State | Condition | Action |
-|-------|-----------|--------|
-| Decrease | Overuse detected | `A_hat(i) = 0.85 * R_hat(i)` (multiply by beta) |
-| Hold | Overuse->Normal | Maintain current rate |
-| Increase (mult) | Far from convergence | `A_hat(i) = 1.08 * A_hat(i-1)` (max 8%/sec) |
-| Increase (add) | Near convergence | `A_hat(i) = A_hat(i-1) + alpha * packet_size` |
-
-**Convergence Detection:** Near convergence = within 3 standard deviations of previously measured rate during Decrease state
-
-**Constraint:** `A_hat(i) < 1.5 * R_hat(i)` (don't overshoot measured rate)
-
-**Sources:** [draft-ietf-rmcat-gcc-02 Section 5.5](https://datatracker.ietf.org/doc/html/draft-ietf-rmcat-gcc-02), [AIMD principles](https://webrtchacks.com/probing-webrtc-bandwidth-probing-why-and-how-in-gcc/)
-
-### 8. Incoming Bitrate Measurement
-| Aspect | Detail |
-|--------|--------|
-| **What** | Track actual received bitrate using sliding window |
-| **Window** | 0.5-1.0 seconds recommended |
-| **Output** | R_hat(i) - measured incoming bitrate |
-| **Complexity** | Low |
-| **Why critical** | Rate controller needs current throughput to calculate decrease amount and convergence. |
-
-### 9. REMB RTCP Packet Generator
-| Aspect | Detail |
-|--------|--------|
-| **What** | Encode bandwidth estimate as RTCP PSFB message |
-| **Format** | PT=206, FMT=15, "REMB" identifier |
-| **Complexity** | Low-Medium |
-| **Why critical** | This is the output - how receiver communicates estimate to sender. |
-
-**REMB Packet Structure:**
-```
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|V=2|P| FMT=15  |   PT=206      |             length            |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                  SSRC of packet sender                        |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                  SSRC of media source (0)                     |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|  Unique identifier 'R' 'E' 'M' 'B'                            |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|  Num SSRC     | BR Exp    |  BR Mantissa (18 bits)            |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|   SSRC feedback (one per stream)                              |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-```
-
-**Bitrate Encoding:** `bitrate_bps = BR_Mantissa * 2^BR_Exp`
-
-**Sending Frequency:**
-- Every 1 second periodically
-- Immediately if `A_hat(i) < 0.97 * A_hat(i-1)` (significant decrease)
-
-**Sources:** [draft-alvestrand-rmcat-remb](https://datatracker.ietf.org/doc/html/draft-alvestrand-rmcat-remb), [REMB implementation](https://walterfan.github.io/webrtc_note/4.code/webrtc_bwe_remb.html)
+**Key Finding:** Pion types provide robust, battle-tested implementations with comprehensive validation. Current BWE code is already using Pion for REMB but has custom timestamp parsing. Pion's extension types offer significant edge case handling that the current implementation may lack.
 
 ---
 
-## Differentiators
+## REMB Types (pion/rtcp)
 
-**Features that improve quality/accuracy but are not required for basic interop.**
+### Current BWE Implementation
 
-### 1. Pre-filtering for Transient Outages
-| Aspect | Detail |
-|--------|--------|
-| **What** | Detect and handle delay spikes from network outages (not congestion) |
-| **How** | Identify burst arrivals after outage ends, merge into single measurement |
-| **Benefit** | Prevents false overuse detection during/after brief outages |
-| **Complexity** | Medium |
+**Location:** `/Users/thesyncim/GolandProjects/bwe/pkg/bwe/remb.go`
 
-**Detection:** Packets with `propagation_delta < 0` and `arrival_delta <= 5ms` arriving within 100ms burst are merged.
+**API Surface:**
+- `BuildREMB(senderSSRC, bitrateBps, mediaSSRCs)` - Creates marshaled REMB packet
+- `ParseREMB(data)` - Parses REMB packet to custom `REMBPacket` struct
+- `REMBPacket.Marshal()` - Wrapper convenience method
 
-**Sources:** [draft-ietf-rmcat-gcc-02 Section 4](https://datatracker.ietf.org/doc/html/draft-ietf-rmcat-gcc-02)
+**Implementation:** Thin wrapper around `pion/rtcp.ReceiverEstimatedMaximumBitrate`
+- Converts `uint64` bitrate to `float32` for Pion
+- Wraps Pion struct in custom `REMBPacket` type
+- Already delegates all marshaling/unmarshaling to Pion
 
-### 2. Exponential Moving Average for Noise Variance
-| Aspect | Detail |
-|--------|--------|
-| **What** | Adaptive measurement noise estimation for Kalman filter |
-| **Formula** | `var_v(i) = max(alpha * var_v(i-1) + (1-alpha) * z(i)^2, 1)` |
-| **Benefit** | Better filter tuning across different network conditions |
-| **Complexity** | Low |
+### Pion REMB API
 
-### 3. Convergence State Tracking
-| Aspect | Detail |
-|--------|--------|
-| **What** | Track whether estimate is near or far from actual capacity |
-| **How** | Maintain EMA of bitrate measurements during Decrease states |
-| **Benefit** | Enables switch between multiplicative and additive increase |
-| **Complexity** | Low-Medium |
+**Package:** `github.com/pion/rtcp v1.2.16`
 
-### 4. Multiple SSRC Support
-| Aspect | Detail |
-|--------|--------|
-| **What** | Single REMB covering multiple incoming streams |
-| **Benefit** | Correct behavior for simulcast/SVC scenarios |
-| **Complexity** | Low |
-
-### 5. Stream Timeout Handling
-| Aspect | Detail |
-|--------|--------|
-| **What** | Remove stale stream data after timeout |
-| **Threshold** | `kStreamTimeOutMs = 2000ms` |
-| **Benefit** | Prevents stale estimates from affecting active streams |
-| **Complexity** | Low |
-
-### 6. Minimum/Maximum Bitrate Bounds
-| Aspect | Detail |
-|--------|--------|
-| **What** | Configurable floor and ceiling for estimates |
-| **Benefit** | Prevents unreasonable estimates (too low = unusable, too high = overload) |
-| **Complexity** | Low |
-
-### 7. Hold State Timer
-| Aspect | Detail |
-|--------|--------|
-| **What** | Delay increase after transitioning from overuse to normal |
-| **Benefit** | Allows network to stabilize before ramping up again |
-| **Complexity** | Low |
-
-### 8. REMB Throttling
-| Aspect | Detail |
-|--------|--------|
-| **What** | Rate-limit REMB messages to avoid feedback overhead |
-| **Benefit** | Reduces RTCP bandwidth consumption |
-| **Complexity** | Low |
-
----
-
-## Anti-Features (v1)
-
-**Deliberately excluded from v1 scope. These add complexity without being required for REMB interop.**
-
-### 1. Loss-Based Estimation
-| Reason | Loss-based control runs on sender side in libwebrtc. Receiver-side REMB is purely delay-based. Mixing them adds complexity for marginal benefit when interop target is Chrome. |
-|--------|-----|
-
-### 2. Transport-Wide Congestion Control (TWCC)
-| Reason | TWCC is sender-side BWE. Project goal is receiver-side REMB. Different protocol, different architecture. Pion already has TWCC interceptor. |
-|--------|-----|
-
-### 3. Absolute Capture Time Support
-| Reason | abs-capture-time is for A/V sync across SFUs, not bandwidth estimation. Not needed for REMB. |
-|--------|-----|
-
-### 4. Bandwidth Probing
-| Reason | Probing is sender-side behavior. Receiver just observes and estimates. |
-|--------|-----|
-
-### 5. Trendline Estimator (sender-side variant)
-| Reason | Modern libwebrtc moved to sender-side trendline with TWCC. For receiver-side REMB interop, the Kalman filter approach is more appropriate. Can add trendline as alternative later if needed. |
-|--------|-----|
-
-### 6. RemoteEstimate RTCP Extension
-| Reason | Google Meet's proprietary extension (dual upper/lower bounds). Not standardized, not needed for basic Chrome interop. |
-|--------|-----|
-
-### 7. Network Condition Classifier (ML-based)
-| Reason | Meta and others use ML for BWE tuning. Out of scope for v1 reference implementation. |
-|--------|-----|
-
-### 8. RTT Estimation
-| Reason | Receiver-side delay-based BWE uses one-way delay, not RTT. RTT would be used for sender-side estimation. |
-|--------|-----|
-
----
-
-## Component Dependencies
-
-```
-                    +------------------+
-                    | RTP Packet Input |
-                    +--------+---------+
-                             |
-                             v
-              +------------------------------+
-              | abs-send-time Parser (1)     |
-              +------------------------------+
-                             |
-                             v
-              +------------------------------+
-              | Packet Group Aggregation (3) |
-              +------------------------------+
-                             |
-                             v
-              +------------------------------+
-              | Inter-Arrival Calculator (2) |
-              +------------------------------+
-                             |
-                             v
-              +------------------------------+
-              | Arrival-Time Filter (4)      |<---+
-              | (Kalman / Trendline)         |    |
-              +------------------------------+    |
-                             |                    |
-                             v                    |
-              +------------------------------+    |
-              | Adaptive Threshold (6)       |----+
-              +------------------------------+
-                             |
-                             v
-              +------------------------------+
-              | Overuse Detector (5)         |
-              +------------------------------+
-                             |
-                             v
-    +--------------------+   |   +-------------------------+
-    | Bitrate Measure (8)|-->+<--| Convergence Tracker (D3)|
-    +--------------------+   |   +-------------------------+
-                             v
-              +------------------------------+
-              | AIMD Rate Controller (7)     |
-              +------------------------------+
-                             |
-                             v
-              +------------------------------+
-              | REMB Generator (9)           |
-              +------------------------------+
-                             |
-                             v
-                    +------------------+
-                    | RTCP Output      |
-                    +------------------+
+**Struct Definition:**
+```go
+type ReceiverEstimatedMaximumBitrate struct {
+    SenderSSRC uint32   // SSRC of sender
+    Bitrate    float32  // Estimated maximum bitrate
+    SSRCs      []uint32 // SSRC entries which this packet applies to
+}
 ```
 
-**Dependency Chain:**
-1. abs-send-time Parser -> required by Inter-Arrival Calculator
-2. Inter-Arrival Calculator -> required by Arrival-Time Filter
-3. Packet Group Aggregation -> processes input for Inter-Arrival Calculator
-4. Arrival-Time Filter -> required by Overuse Detector (via Adaptive Threshold)
-5. Adaptive Threshold -> feeds threshold to Overuse Detector
-6. Overuse Detector -> required by AIMD Rate Controller
-7. Incoming Bitrate Measurement -> required by AIMD Rate Controller
-8. AIMD Rate Controller -> required by REMB Generator
-9. REMB Generator -> final output
+**Methods:**
+| Method | Purpose | Edge Cases Handled |
+|--------|---------|-------------------|
+| `Marshal()` | Serialize to bytes | Auto buffer allocation |
+| `MarshalSize()` | Get size before alloc | Returns `20 + 4*len(SSRCs)` |
+| `MarshalTo(buf)` | Serialize to existing buffer | Bitrate clamping, exponent overflow protection |
+| `Unmarshal(buf)` | Deserialize from bytes | 9 validation checks (see below) |
+| `Header()` | Get RTCP header | Format=15, Type=206 |
+| `String()` | Human-readable format | Unit conversion (b/s to Kb/s, Mb/s) |
+| `DestinationSSRC()` | Get SSRC list | Returns []uint32 |
+
+**Edge Cases Handled by Pion:**
+
+1. **Unmarshal Validation (9 checks):**
+   - Minimum 20 bytes required (`errPacketTooShort`)
+   - Version must equal 2 (`errBadVersion`)
+   - Padding must be unset (`errWrongPadding`)
+   - Format value must be 15 (`errWrongFeedbackType`)
+   - Payload type must be 206 (`errWrongPayloadType`)
+   - Media source SSRC must be 0 (`errSSRCMustBeZero`)
+   - Identifier must be "REMB" (`errMissingREMBidentifier`)
+   - SSRC count must match packet length (`errSSRCNumAndLengthMismatch`)
+   - Header size validation (`errHeaderTooSmall`)
+
+2. **Marshal Edge Cases:**
+   - Bitrate clamping to max `0x3FFFFp+63`
+   - Rejects negative bitrate values (`errInvalidBitrate`)
+   - Exponent overflow protection (exponent >= 64 rejected)
+   - Mantissa max: `0x7FFFFF` (18-bit)
+   - Buffer size enforcement (`errWrongMarshalSize`)
+
+3. **Bitrate Encoding:**
+   - Uses mantissa+exponent format per REMB spec
+   - 6-bit exponent, 18-bit mantissa
+   - Handles floating point to fixed-point conversion correctly
+
+### Current BWE vs Pion REMB
+
+| Feature | Current BWE | Pion |
+|---------|-------------|------|
+| Basic marshal/unmarshal | Uses Pion underneath | Native implementation |
+| Bitrate type | `uint64` wrapper | `float32` (spec-compliant) |
+| Validation | Delegated to Pion | 9 comprehensive checks |
+| Edge case handling | Via Pion | Bitrate clamping, overflow protection |
+| Convenience | Custom `REMBPacket` wrapper | Direct struct usage |
+| Testing | Minimal (delegates to Pion) | Battle-tested in production |
+
+**Verdict:** Current implementation is already a thin wrapper. Could be replaced entirely by Pion type with minimal changes.
 
 ---
 
-## Complexity Assessment
+## RTP Extension Types (pion/rtp)
 
-| Component | Complexity | Rationale |
-|-----------|------------|-----------|
-| abs-send-time Parser | **Low** | Simple bit manipulation, 24-bit fixed-point conversion |
-| Packet Group Aggregation | **Low-Medium** | State tracking for burst detection, timestamp comparison |
-| Inter-Arrival Calculator | **Low-Medium** | Basic arithmetic, but must handle wraparound correctly |
-| Arrival-Time Filter (Kalman) | **Medium-High** | Recursive filter with 5+ parameters to tune correctly |
-| Adaptive Threshold | **Medium** | Dynamic update logic with clamping and skip conditions |
-| Overuse Detector | **Medium** | FSM with timing requirements (10ms duration check) |
-| AIMD Rate Controller | **Medium** | State machine with multiplicative/additive modes and convergence detection |
-| Incoming Bitrate Measurement | **Low** | Sliding window counter |
-| REMB Generator | **Low-Medium** | RTCP packet construction, mantissa/exponent encoding |
+### Current BWE Implementation
 
-**Overall Implementation Estimate:**
-- Core pipeline (all table stakes): **Medium-High** complexity
-- Primary challenge: Getting Kalman filter parameters tuned correctly for Chrome-like behavior
-- Secondary challenge: Ensuring 64-second timestamp wraparound is handled correctly
+**Locations:**
+- `/Users/thesyncim/GolandProjects/bwe/pkg/bwe/timestamp.go` - Custom parsing
+- `/Users/thesyncim/GolandProjects/bwe/pkg/bwe/interceptor/extension.go` - Extension ID lookup
+
+**API Surface:**
+
+**Abs-Send-Time (24-bit, 6.18 fixed-point):**
+- `ParseAbsSendTime(data []byte) (uint32, error)` - Parse 3-byte big-endian
+- `AbsSendTimeToDuration(value) time.Duration` - Convert to duration
+- `UnwrapAbsSendTime(prev, curr) int64` - Handle 64-second wraparound
+- `UnwrapAbsSendTimeDuration(prev, curr) time.Duration` - Wraparound + conversion
+
+**Abs-Capture-Time (64-bit, UQ32.32 format):**
+- `ParseAbsCaptureTime(data []byte) (uint64, error)` - Parse 8-byte big-endian
+- `AbsCaptureTimeToDuration(value) time.Duration` - Convert UQ32.32 to duration
+- `UnwrapAbsCaptureTime(prev, curr) int64` - Simple signed diff (no wrap concern)
+- `UnwrapAbsCaptureTimeDuration(prev, curr) time.Duration` - Diff + conversion
+
+**Extension ID Discovery:**
+- `FindExtensionID(exts, uri) uint8` - Linear search for URI
+- `FindAbsSendTimeID(exts) uint8` - Convenience for abs-send-time
+- `FindAbsCaptureTimeID(exts) uint8` - Convenience for abs-capture-time
+- URIs: `AbsSendTimeURI`, `AbsCaptureTimeURI` constants
+
+**Edge Cases Handled by Current Code:**
+
+1. **Parsing Validation:**
+   - Abs-send-time: Requires minimum 3 bytes, returns `ErrInvalidAbsSendTime`
+   - Abs-capture-time: Requires minimum 8 bytes, returns `ErrInvalidAbsCaptureTime`
+   - Handles nil input gracefully
+   - Extra bytes ignored (only reads required bytes)
+
+2. **Wraparound Handling (Abs-Send-Time):**
+   - Half-range comparison (32-second threshold)
+   - Detects forward wraparound (apparent negative delta > 32s)
+   - Detects backward wraparound (apparent positive delta > 32s)
+   - Correct signed delta calculation
+   - Well-tested with 15 test cases covering boundary conditions
+
+3. **Tested Edge Cases:**
+   - Zero value
+   - Minimum/maximum values
+   - Boundary crossings (0 ↔ max)
+   - Exactly half-range jumps
+   - Extra bytes ignored
+   - Short/empty/nil inputs
+
+### Pion RTP Extension API
+
+**Package:** `github.com/pion/rtp v1.10.0`
+
+#### 1. AbsSendTimeExtension
+
+**Struct:**
+```go
+type AbsSendTimeExtension struct {
+    Timestamp uint64  // 24-bit timestamp stored in uint64
+}
+```
+
+**Constants:**
+- `absSendTimeExtensionSize = 3` bytes
+
+**Methods:**
+| Method | Purpose | Edge Cases |
+|--------|---------|-----------|
+| `NewAbsSendTimeExtension(time.Time)` | Factory from time | Converts to NTP, shifts right 14 bits |
+| `Marshal()` | Serialize to 3 bytes | Auto-allocates buffer |
+| `MarshalTo(buf)` | Serialize to buffer | Returns `io.ErrShortBuffer` if <3 bytes |
+| `MarshalSize()` | Returns 3 | Fixed size |
+| `Unmarshal(rawData)` | Deserialize | Rejects if <3 bytes |
+| `Estimate(receive time.Time)` | Reconstruct absolute time | Assumes transmission delay ≤64s |
+
+**Encoding:**
+- Big-endian 24-bit: `(data[0]<<16) | (data[1]<<8) | data[2]`
+- Same as current BWE implementation
+
+**Additional Functionality Not in Current BWE:**
+1. **Factory from `time.Time`:** `NewAbsSendTimeExtension(sendTime)` - converts Go time to NTP
+2. **Estimate method:** Reconstructs absolute send time from receive timestamp
+   - Combines 24-bit timestamp with upper 34 bits of receive NTP time
+   - Adjusts if result exceeds receive time
+   - Assumes transmission delay <64 seconds
+3. **NTP helpers:** `toNtpTime()`, `toTime()` for epoch conversion
+4. **Built-in validation:** Marshal/Unmarshal error on wrong sizes
+
+**What Current BWE Has That Pion Doesn't:**
+1. **Wraparound delta calculation:** `UnwrapAbsSendTime()` with half-range logic
+2. **Duration conversion helpers:** `AbsSendTimeToDuration()`, `UnwrapAbsSendTimeDuration()`
+3. **Domain constants:** `AbsSendTimeMax`, `AbsSendTimeResolution`
+
+**Verdict:** Pion provides time reconstruction, current BWE provides delta calculation. Both are needed for BWE use case.
+
+#### 2. AbsCaptureTimeExtension
+
+**Struct:**
+```go
+type AbsCaptureTimeExtension struct {
+    Timestamp                    uint64   // UQ32.32 format
+    EstimatedCaptureClockOffset  *int64   // Optional clock offset
+}
+```
+
+**Constants:**
+- `absCaptureTimeExtensionSize = 8` bytes (minimum)
+- `absCaptureTimeExtendedExtensionSize = 16` bytes (with clock offset)
+
+**Methods:**
+| Method | Purpose | Edge Cases |
+|--------|---------|-----------|
+| `NewAbsCaptureTimeExtension(time.Time)` | Factory from time | Converts to UQ32.32 |
+| `NewAbsCaptureTimeExtensionWithCaptureClockOffset(time.Time, duration)` | Factory with offset | Handles negative offsets |
+| `Marshal()` | Serialize | 8 or 16 bytes depending on offset presence |
+| `MarshalTo(buf)` | Serialize to buffer | `io.ErrShortBuffer` if insufficient space |
+| `MarshalSize()` | Returns 8 or 16 | Based on offset presence |
+| `Unmarshal(rawData)` | Deserialize | Requires ≥8 bytes, optionally reads 16 |
+| `CaptureTime()` | Convert to `time.Time` | Uses internal `toTime()` helper |
+| `EstimatedCaptureClockOffsetDuration()` | Convert offset to duration | Handles negative values, bit-shifting for fractional seconds |
+
+**Encoding:**
+- 64-bit big-endian UQ32.32: upper 32 bits = seconds, lower 32 bits = fraction
+- Optional 64-bit clock offset in bytes 8-15
+- Unmarshal checks length to determine if offset present
+
+**Additional Functionality Not in Current BWE:**
+1. **Clock offset support:** Second field for inter-stream sync
+2. **Factory methods:** Create from `time.Time` and offset duration
+3. **CaptureTime() method:** Direct conversion to Go time
+4. **EstimatedCaptureClockOffsetDuration():** Convert offset to duration
+5. **Variable-length encoding:** 8 vs 16 bytes based on offset presence
+
+**What Current BWE Has That Pion Doesn't:**
+1. **Duration conversion:** `AbsCaptureTimeToDuration()`
+2. **Delta calculation:** `UnwrapAbsCaptureTime()`, `UnwrapAbsCaptureTimeDuration()`
+3. **Domain constant:** `AbsCaptureTimeResolution`
+
+**Verdict:** Pion provides richer feature set (clock offset, time conversion). Current BWE focuses on delta calculation for delay estimation.
+
+#### 3. Generic Extension APIs (rtp.Header)
+
+**Methods:**
+| Method | Signature | Behavior |
+|--------|-----------|----------|
+| `GetExtension(id uint8)` | `[]byte` | Returns payload or `nil` if missing/disabled |
+| `GetExtensionIDs()` | `[]uint8` | Returns all IDs or `nil` if none |
+| `SetExtension(id, payload)` | `error` | Validates, updates existing or appends new |
+
+**Validation in SetExtension:**
+- Calls `headerExtensionCheck()` to validate payload vs profile
+- Auto-selects profile if no extensions exist:
+  - ≤16 bytes → OneByte profile
+  - >16 and <256 bytes → TwoByte profile
+- Updates existing extension if ID matches
+- Appends new extension otherwise
+
+**Edge Cases:**
+- All methods gracefully return `nil` for missing extensions (no errors)
+- No validation on Get operations
+- Linear search through Extensions slice (fine for small lists)
+- Recent fixes (2025-2026): Off-by-one errors in OneByte/TwoByte Set methods (v4.2.0)
+
+**Known Limitations:**
+- SetExtension doesn't upgrade profile from OneByte to TwoByte (pion/rtp#249)
+
+**What Current BWE Does:**
+- Uses Pion's `GetExtension()` via `packet.GetExtension(extensionID)`
+- Then manually parses bytes with `ParseAbsSendTime()` or `ParseAbsCaptureTime()`
+- Extension ID discovery via custom `FindExtensionID()` helper
 
 ---
 
-## Recommended Implementation Order
+## Comparison Matrix: Current BWE vs Pion
 
-Based on dependencies and testing ability:
+### REMB Functionality
 
-1. **Phase 1: Foundation**
-   - abs-send-time parser
-   - REMB packet generator (can test output format)
-   - Incoming bitrate measurement
+| Capability | Current BWE | Pion RTCP | Recommendation |
+|------------|-------------|-----------|----------------|
+| Marshal/Unmarshal | Delegates to Pion | Native | **Replace wrapper with direct Pion usage** |
+| Bitrate type | uint64 wrapper | float32 (spec) | **Adopt float32** (simpler, spec-compliant) |
+| Validation | Via Pion | 9 checks | **Already using Pion's validation** |
+| Edge cases | Via Pion | Clamping, overflow | **Already covered** |
+| Convenience | Custom wrapper | Direct struct | **Eliminate wrapper** (unnecessary abstraction) |
 
-2. **Phase 2: Core Pipeline**
-   - Packet group aggregation
-   - Inter-arrival calculator
-   - Basic overuse detector (static threshold)
+### Abs-Send-Time Functionality
 
-3. **Phase 3: Rate Control**
-   - AIMD rate controller
-   - Integration: detector -> controller -> REMB
+| Capability | Current BWE | Pion RTP | Gap Analysis |
+|------------|-------------|----------|--------------|
+| Parse 3-byte payload | `ParseAbsSendTime()` | `Unmarshal()` | **Equivalent** - same big-endian logic |
+| Timestamp storage | `uint32` (24-bit) | `uint64` (stores 24-bit) | **Pion has unnecessary overhead** |
+| Create from time.Time | Not supported | `NewAbsSendTimeExtension()` | **Pion advantage** - useful for testing |
+| Convert to duration | `AbsSendTimeToDuration()` | Not supported | **BWE advantage** - needed for delay calc |
+| Wraparound detection | `UnwrapAbsSendTime()` | Not supported | **BWE critical feature** - 64s wraparound |
+| Reconstruct absolute time | Not supported | `Estimate(receive)` | **Pion feature** - not needed for BWE |
+| NTP conversion | Not supported | `toNtpTime()`, `toTime()` | **Pion internal** - not exposed |
+| Validation | Manual length check | `Unmarshal()` error | **Equivalent** |
 
-4. **Phase 4: Refinement**
-   - Arrival-time filter (Kalman)
-   - Adaptive threshold
-   - Pre-filtering for transients
+**Recommendation:**
+- **Keep current parsing logic** - it's simpler (uint32 not uint64) and includes critical wraparound handling
+- **Could adopt** Pion's factory method for test utilities
+- **Cannot replace** without implementing wraparound logic on top of Pion
 
-5. **Phase 5: Polish**
-   - Stream timeout handling
-   - Multiple SSRC support
-   - REMB throttling
+### Abs-Capture-Time Functionality
+
+| Capability | Current BWE | Pion RTP | Gap Analysis |
+|------------|-------------|----------|--------------|
+| Parse 8-byte payload | `ParseAbsCaptureTime()` | `Unmarshal()` | **Equivalent** - same UQ32.32 logic |
+| Timestamp storage | `uint64` | `uint64` | **Same** |
+| Clock offset support | Not supported | `EstimatedCaptureClockOffset` field | **Pion advantage** - future-proof |
+| Create from time.Time | Not supported | Factory methods | **Pion advantage** - useful for testing |
+| Convert to time.Time | Not supported | `CaptureTime()` | **Pion advantage** - cleaner API |
+| Convert to duration | `AbsCaptureTimeToDuration()` | Not supported | **BWE advantage** - needed for delay calc |
+| Delta calculation | `UnwrapAbsCaptureTime()` | Not supported | **BWE advantage** - needed for BWE |
+| Offset to duration | Not supported | `EstimatedCaptureClockOffsetDuration()` | **Pion feature** - not used in BWE |
+| Variable-length marshal | Not supported | 8 or 16 bytes based on offset | **Pion advantage** - handles extension |
+| Validation | Manual length check | `Unmarshal()` length check | **Equivalent** |
+
+**Recommendation:**
+- **Consider hybrid approach** - use Pion for parsing (cleaner API, clock offset support), add duration helpers
+- **Benefit:** Clock offset field available for future multi-stream sync
+- **Cost:** Need to implement delta calculation on top of Pion types
+
+### Extension ID Discovery
+
+| Capability | Current BWE | Pion RTP | Gap Analysis |
+|------------|-------------|----------|--------------|
+| Find ID by URI | `FindExtensionID()` | Not provided | **BWE custom** - needed |
+| URI constants | `AbsSendTimeURI`, `AbsCaptureTimeURI` | Not provided | **BWE custom** - convenience |
+| Convenience helpers | `FindAbsSendTimeID()`, etc | Not provided | **BWE custom** - nice to have |
+
+**Recommendation:** **Keep current extension ID helpers** - Pion doesn't provide this abstraction.
 
 ---
 
-## Key Sources
+## Edge Cases: Detailed Comparison
 
-**Authoritative:**
-- [draft-ietf-rmcat-gcc-02](https://datatracker.ietf.org/doc/html/draft-ietf-rmcat-gcc-02) - GCC algorithm specification
-- [draft-alvestrand-rmcat-remb](https://datatracker.ietf.org/doc/html/draft-alvestrand-rmcat-remb) - REMB RTCP format
-- [abs-send-time spec](https://webrtc.googlesource.com/src/+/main/docs/native-code/rtp-hdrext/abs-send-time/README.md) - Header extension format
+### 1. REMB Packet Validation
 
-**Implementation Reference:**
-- [libwebrtc remote_bitrate_estimator](https://chromium.googlesource.com/external/webrtc/+/refs/heads/master/modules/remote_bitrate_estimator/) - C++ source
-- [inter_arrival.cc](https://github.com/webrtc-uwp/webrtc/blob/master/modules/remote_bitrate_estimator/inter_arrival.cc) - Packet grouping
-- [aimd_rate_control.cc](https://chromium.googlesource.com/external/webrtc/+/refs/heads/master/modules/remote_bitrate_estimator/aimd_rate_control.cc) - Rate controller
+**Pion RTCP Handles:**
+- Minimum packet size (20 bytes)
+- RTCP version validation (must be 2)
+- Padding bit validation (must be unset)
+- Feedback message type (must be 15)
+- Payload type (must be 206)
+- Media source SSRC (must be 0)
+- REMB identifier string ("REMB")
+- SSRC count vs packet length consistency
+- Bitrate overflow (clamps to max)
+- Negative bitrate rejection
+- Exponent overflow (>=64)
 
-**Analysis:**
-- [GCC Analysis Paper (C3Lab)](https://c3lab.poliba.it/images/6/65/Gcc-analysis.pdf) - Deep analysis of algorithm behavior
-- [Remote Bitrate Estimator tutorial](https://www.fanyamin.com/webrtc/tutorial/build/html/4.code/remote_bitrate_estimator.html) - Architecture overview
+**Current BWE:** Fully delegates to Pion, so all above are handled.
 
-**Pion Reference:**
-- [pion/interceptor](https://github.com/pion/interceptor) - Existing Go WebRTC interceptors (TWCC implemented, REMB not)
-- [Bandwidth Estimator issue](https://github.com/pion/interceptor/issues/25) - Pion BWE roadmap
+**Missing in Current BWE:** Direct access to validation errors (wrapped by Pion).
+
+### 2. Abs-Send-Time Wraparound
+
+**Current BWE Handles:**
+- 64-second wraparound detection using half-range comparison
+- Forward wrap: timestamp jumps from ~16777000 → 200 (apparent -32s, actually +0.001s)
+- Backward wrap: timestamp jumps from 200 → 16777000 (apparent +32s, actually -0.001s)
+- Exactly half-range edge case (8388608 units = 32s)
+- Boundary crossing (16777215 ↔ 0)
+
+**Pion Does NOT Handle:** No wraparound logic in `AbsSendTimeExtension`. Only parses/encodes raw value.
+
+**Testing Coverage:**
+- Current BWE: 15 test cases covering all wraparound scenarios
+- Pion: No wraparound tests (not its responsibility)
+
+**Verdict:** **Critical feature missing from Pion.** Current BWE implementation is essential.
+
+### 3. Timestamp Precision
+
+**Abs-Send-Time:**
+- Resolution: 1/2^18 seconds = ~3.8 microseconds
+- Both implementations handle identically
+- Current BWE has explicit `AbsSendTimeResolution` constant
+
+**Abs-Capture-Time:**
+- Resolution: 1/2^32 seconds = ~0.23 nanoseconds
+- Both implementations handle identically
+- Current BWE has explicit `AbsCaptureTimeResolution` constant
+
+### 4. Extension Profile Handling
+
+**Pion Handles:**
+- OneByte vs TwoByte profile validation
+- Auto-selection based on payload size
+- Recent bug fixes (2025-2026) for off-by-one errors
+
+**Current BWE:** Doesn't deal with profiles directly - gets raw bytes from `GetExtension()`.
+
+**Known Pion Limitation:** Cannot upgrade profile from OneByte to TwoByte when adding larger extensions.
+
+### 5. Missing Extension Behavior
+
+**Pion:**
+- `GetExtension()` returns `nil` if extension missing
+- `GetExtensionIDs()` returns `nil` if no extensions
+- No errors thrown for missing extensions
+
+**Current BWE:**
+- `FindExtensionID()` returns 0 if URI not found
+- ID 0 is invalid per RFC 5285
+- Caller checks ID != 0 before using
+
+**Both approaches:** Graceful degradation, no crashes on missing extensions.
 
 ---
 
-## Confidence Assessment
+## Limitations Identified
 
-| Area | Confidence | Rationale |
-|------|------------|-----------|
-| Component list | **HIGH** | Verified against IETF draft and libwebrtc source structure |
-| Algorithm parameters | **HIGH** | Directly from draft-ietf-rmcat-gcc-02 |
-| REMB format | **HIGH** | From draft-alvestrand-rmcat-remb |
-| Complexity estimates | **MEDIUM** | Based on algorithm description, not implementation experience |
-| Implementation order | **MEDIUM** | Logical dependency analysis, not validated |
+### Pion Limitations
 
-**Known gaps:**
-- Exact Chrome behavior may differ from draft (libwebrtc evolved significantly)
-- Optimal parameter tuning may require experimentation
-- Edge cases (very low bitrate, high loss) behavior not fully documented
+1. **No wraparound handling for abs-send-time**
+   - Critical for BWE use case
+   - Would need to implement on top of Pion types
+
+2. **No duration conversion helpers**
+   - Must convert timestamps to durations for delay calculation
+   - Would need to implement helper functions
+
+3. **No delta calculation**
+   - BWE needs time deltas between packets
+   - `UnwrapAbsSendTime()` logic would need porting
+
+4. **No extension ID discovery**
+   - Pion doesn't provide URI → ID lookup
+   - Would need to keep custom `FindExtensionID()` helpers
+
+5. **AbsSendTime uses uint64 for 24-bit value**
+   - Wastes 40 bits per timestamp
+   - Current BWE uses uint32 (still wastes 8 bits, but less)
+
+6. **Extension profile upgrade limitation**
+   - Cannot upgrade from OneByte to TwoByte profile
+   - Not an issue for BWE (read-only usage)
+
+### Current BWE Limitations
+
+1. **No clock offset support for abs-capture-time**
+   - Pion provides this for multi-stream sync
+   - Could be useful for future enhancements
+
+2. **No factory methods for testing**
+   - Pion's `NewAbsSendTimeExtension(time.Time)` is cleaner for tests
+   - Current tests use raw byte arrays
+
+3. **No time reconstruction for abs-send-time**
+   - Pion's `Estimate()` method reconstructs absolute time
+   - Not needed for BWE, but could be useful for debugging
+
+4. **Manual parsing vs typed structs**
+   - Current code gets raw bytes, then parses manually
+   - Pion provides typed extension structs
+
+---
+
+## Recommendations
+
+### REMB: Full Adoption
+
+**Action:** Replace `REMBPacket` wrapper with direct `pion/rtcp.ReceiverEstimatedMaximumBitrate` usage.
+
+**Rationale:**
+- Already delegating everything to Pion
+- Wrapper adds no value
+- Converting uint64 ↔ float32 is unnecessary indirection
+- Adopting Pion's float32 is more spec-compliant
+
+**Migration:**
+- Change function signatures to use `float32` for bitrate
+- Remove `REMBPacket` struct
+- Update callers to use Pion struct directly
+
+**Risk:** Low - minimal API surface, well-tested in Pion
+
+### Abs-Send-Time: Keep Current Implementation
+
+**Action:** Keep current parsing and wraparound logic. Optionally adopt Pion's factory for testing.
+
+**Rationale:**
+- Critical wraparound handling not in Pion
+- Duration conversion helpers are BWE-specific
+- Current implementation is well-tested (15 test cases)
+- uint32 storage is more efficient than Pion's uint64
+
+**Potential Enhancement:**
+- Add `NewAbsSendTimeFromTime(time.Time) uint32` helper inspired by Pion
+- Useful for test packet generation
+
+**Risk:** None - keeping battle-tested code
+
+### Abs-Capture-Time: Hybrid Approach
+
+**Action:** Consider using Pion's `AbsCaptureTimeExtension` for parsing, add delta/duration helpers.
+
+**Rationale:**
+- Pion provides clock offset field (future-proof)
+- Pion has cleaner time conversion API
+- Need to add delta calculation anyway
+- Variable-length encoding handled by Pion
+
+**Migration Path:**
+1. Adopt Pion struct for parsing
+2. Implement `UnwrapAbsCaptureTime()` using Pion's Timestamp field
+3. Implement `AbsCaptureTimeToDuration()` using Pion's `CaptureTime()`
+4. Keep current helpers as methods on Pion type
+
+**Risk:** Medium - need to verify clock offset handling doesn't break parsing
+
+### Extension ID Discovery: Keep Current
+
+**Action:** Keep `FindExtensionID()` and convenience helpers.
+
+**Rationale:**
+- Pion doesn't provide this abstraction
+- Current implementation is simple and correct
+- No advantage to replacing
+
+**Risk:** None
+
+---
+
+## Sources
+
+### Pion RTCP (ReceiverEstimatedMaximumBitrate)
+- [Pion RTCP Package Documentation](https://pkg.go.dev/github.com/pion/rtcp)
+- [ReceiverEstimatedMaximumBitrate Source Code](https://github.com/pion/rtcp/blob/master/receiver_estimated_maximum_bitrate.go)
+
+### Pion RTP (Extensions)
+- [Pion RTP Package Documentation](https://pkg.go.dev/github.com/pion/rtp)
+- [AbsSendTimeExtension Source Code](https://github.com/pion/rtp/blob/master/abssendtimeextension.go)
+- [AbsCaptureTimeExtension Source Code](https://github.com/pion/rtp/blob/master/abscapturetimeextension.go)
+- [Header Extension API](https://github.com/pion/rtp/blob/master/packet.go)
+- [Extension Profile Handling](https://github.com/pion/rtp/blob/master/header_extension.go)
+
+### Pion RTP Issues & Fixes
+- [Issue #249: SetExtension doesn't upgrade OneByte to TwoByte profile](https://github.com/pion/rtp/issues/249)
+- [Release v4.2.0: Off-by-one fixes in extension handling](https://github.com/pion/webrtc/releases/tag/v4.2.0)
+
+### Current BWE Implementation
+- Local file: `/Users/thesyncim/GolandProjects/bwe/pkg/bwe/remb.go`
+- Local file: `/Users/thesyncim/GolandProjects/bwe/pkg/bwe/timestamp.go`
+- Local file: `/Users/thesyncim/GolandProjects/bwe/pkg/bwe/timestamp_test.go`
+- Local file: `/Users/thesyncim/GolandProjects/bwe/pkg/bwe/interceptor/extension.go`

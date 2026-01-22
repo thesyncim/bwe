@@ -1,598 +1,777 @@
-# Pitfalls Research: GCC Receiver-Side BWE
+# Pitfalls Research: Migration Risks - Pion Type Adoption
 
-**Domain:** WebRTC Congestion Control / Bandwidth Estimation
+**Domain:** Refactoring BWE to use Pion native types
 **Researched:** 2026-01-22
-**Confidence:** HIGH (verified against IETF draft, libwebrtc source, academic papers)
+**Confidence:** HIGH (based on codebase analysis, benchmark data, Pion documentation)
 
 ---
 
-## Algorithm Pitfalls
+## Executive Summary
 
-### Critical: Static Threshold Causes Starvation
+This is a **refactor of working code**. The main risk is **breaking something that works**. Current implementation has:
+- Comprehensive tests (unit, integration, soak)
+- Chrome interop verified
+- 0 allocs/op in hot path (core estimator)
+- 24-bit timestamp wraparound handling validated
 
-**What goes wrong:** Using a fixed threshold in the overuse detector causes GCC flows to be starved when competing with TCP traffic. The delay-based controller becomes too sensitive or too insensitive depending on network conditions.
+**Migration target areas:**
+1. REMB marshalling → `pion/rtcp.ReceiverEstimatedMaximumBitrate`
+2. RTP extension parsing → Pion's extension APIs
+3. Timestamp handling → Pion utilities where applicable
 
-**Why it happens:** The original GCC algorithm used a static threshold. Academic research (Carlucci et al., 2017) proved this causes starvation because TCP's aggressive loss-based control dominates when the threshold is too small, and GCC becomes unresponsive when it's too large.
-
-**Consequences:**
-- Bandwidth estimate drops to near-zero when TCP traffic is present
-- Recovery can take 10+ minutes or never recover
-- Unfair bandwidth sharing between GCC flows
-
-**Prevention:**
-- Implement the adaptive threshold from IETF draft-ietf-rmcat-gcc-02
-- Formula: `del_var_th(i) = del_var_th(i-1) + (t(i)-t(i-1)) * K(i) * (|m(i)| - del_var_th(i-1))`
-- Use asymmetric coefficients: K_u = 0.01, K_d = 0.00018 (K_u > K_d is critical)
-- Clamp threshold between 6ms and 600ms
-- Skip update when `|m(i)| - del_var_th(i)` exceeds 15ms (outlier filtering)
-
-**Detection:** Test with concurrent TCP traffic (iperf). If your GCC flow gets starved, the adaptive threshold is broken or missing.
-
-**Phase:** Core algorithm implementation (Phase 1)
+**Key constraint:** Behavioral compatibility must be preserved. Minor improvements acceptable if Pion handles edge cases better.
 
 ---
 
-### Critical: Wrong Delay Gradient Estimation
+## Critical Pitfalls
 
-**What goes wrong:** The inter-group delay variation (m(i)) is calculated incorrectly, leading to false overuse/underuse signals.
+### Critical 1: Allocation Regressions in Hot Path
 
-**Why it happens:**
-- Confusing arrival time deltas with timestamp deltas
-- Not properly grouping packets into timestamp groups (video frames)
-- Using wrong units (mixing milliseconds with RTP timestamp units)
+**What breaks:** Current code achieves 0 allocs/op in `OnPacket()`. Switching to Pion types introduces allocations that regress this.
 
-**Consequences:**
-- Bandwidth oscillates wildly (sawtooth pattern)
-- False congestion detection triggers unnecessary rate cuts
-- Never converges to stable estimate
+**Where it happens:**
+- **REMB marshalling:** Current `BuildREMB()` shows `1 alloc/op` (24 B/op) for `rtcp.ReceiverEstimatedMaximumBitrate{}.Marshal()`
+- **REMB parsing:** Current `ParseREMB()` shows `2 allocs/op` (56 B/op) for `rtcp.Unmarshal()`
+- **RTP header parsing:** Current interceptor shows `2 allocs/op` (104 B/op) in `processRTP`
 
-**Prevention:**
-- Timestamp groups should be based on RTP timestamp, not arrival time
-- Group length should be ~5ms (kTimestampGroupLengthTicks in libwebrtc)
-- Calculate inter-arrival delta: `(arrival[i] - arrival[i-1]) - (timestamp[i] - timestamp[i-1]) / clockrate`
-- Filter using trendline or Kalman filter, not raw values
+**Why it matters:**
+- PERF-01 requirement: <1 alloc/op for steady-state packet processing
+- Current baseline: **0 allocs/op** in `BandwidthEstimator.OnPacket`
+- At 1000 pps (typical video), even 1 alloc/op = 1000 heap allocations/sec
+- GC pressure increases latency, affects estimation accuracy
 
-**Detection:** Compare delay gradient output against libwebrtc with same packet trace. Large divergence indicates calculation error.
-
-**Phase:** Core algorithm implementation (Phase 1)
-
----
-
-### High: Incorrect AIMD Rate Control State Machine
-
-**What goes wrong:** The rate control state machine transitions incorrectly, causing bandwidth estimate to oscillate or get stuck.
-
-**Why it happens:** Misunderstanding the three-state machine (Increase, Decrease, Hold) and its transition rules. Common mistakes:
-- Always decreasing on overuse (should transition to Decrease state, not continuously decrease)
-- Not distinguishing multiplicative vs additive increase phases
-- Wrong alpha factor for decrease (should be ~0.85, not arbitrary value)
-
-**Consequences:**
-- Bandwidth undershoots repeatedly after congestion
-- Slow convergence (minutes instead of seconds)
-- Unfair bandwidth allocation between flows
-
-**Prevention:**
-Implement exact state machine from IETF draft:
-
-| Signal    | Hold       | Increase   | Decrease   |
-|-----------|------------|------------|------------|
-| Overuse   | -> Decrease| -> Decrease| (stay)     |
-| Normal    | -> Increase| (stay)     | -> Hold    |
-| Underuse  | (stay)     | -> Hold    | -> Hold    |
-
-- Multiplicative increase: 8% per second when far from convergence
-- Additive increase: ~0.5 packets per RTT when near convergence
-- Multiplicative decrease: multiply by 0.85 on overuse
-
-**Detection:** Log state transitions. Healthy flow should cycle: Increase -> Hold -> Decrease -> Hold -> Increase...
-
-**Phase:** Rate control implementation (Phase 2)
-
----
-
-### High: Burst Grouping Failures
-
-**What goes wrong:** Packets sent in bursts (due to pacing or network behavior) are incorrectly treated as separate arrivals, causing false congestion detection.
-
-**Why it happens:** Not implementing burst detection logic from libwebrtc's `inter_arrival.cc`. Burst packets arrive within 5ms of each other but have different RTP timestamps.
-
-**Consequences:**
-- Spurious overuse signals from normal bursty traffic
-- Bandwidth estimate drops unnecessarily
-- Poor performance with bursty video encoders
-
-**Prevention:**
-- Implement `BelongsToBurst()` logic:
-  - propagation_delta = timestamp_delta - arrival_delta
-  - If propagation_delta < 0 and arrival_delta <= 5ms and total burst < 100ms, group as burst
-- Constants: kBurstDeltaThresholdMs = 5, kMaxBurstDurationMs = 100
-
-**Detection:** Test with bursty traffic pattern. If bandwidth drops significantly more than with smooth traffic at same rate, burst grouping is broken.
-
-**Phase:** Inter-arrival calculation (Phase 1)
-
----
-
-### Medium: Overuse Time Threshold Ignored
-
-**What goes wrong:** Overuse signal is generated immediately when threshold is crossed, rather than waiting for sustained overuse.
-
-**Why it happens:** Missing the `overuse_time_th` parameter (10ms) that requires overuse condition to persist before signaling.
-
-**Consequences:**
-- Transient network jitter causes unnecessary rate decreases
-- Bandwidth estimate is overly reactive
-- Poor performance on jittery but adequate networks
-
-**Prevention:**
-- Only signal overuse after condition persists for `overuse_time_th` (default 10ms)
-- Reset timer when condition clears
-- This filters out transient spikes
-
-**Phase:** Overuse detector (Phase 1)
-
----
-
-## Timing/Clock Pitfalls
-
-### Critical: Timestamp Wraparound Handling
-
-**What goes wrong:** 32-bit RTP timestamps wrap around after ~13 hours at 90kHz clock rate (video) or ~6 hours at 48kHz (audio). Incorrect wraparound handling causes massive spurious delay calculations.
-
-**Why it happens:** Naive subtraction of timestamps without considering wraparound produces huge negative or positive deltas.
-
-**Consequences:**
-- Sudden massive "congestion" detection after 6-13 hours
-- Bandwidth estimate crashes to minimum
-- Call quality degrades severely for long sessions
-
-**Prevention:**
-- Use wraparound-safe comparison: treat delta > 2^31 as wraparound
-- libwebrtc uses: "a diff which is bigger than half the timestamp interval (32 bits) must be due to reordering"
-- Implement as: `if delta > 0x7FFFFFFF { delta -= 0x100000000 }`
-
-**Detection:** Run long-duration tests (>12 hours). Monitor for sudden bandwidth drops.
-
-**Phase:** Core timestamp handling (Phase 1)
-
----
-
-### Critical: Absolute Send Time 24-bit Wraparound
-
-**What goes wrong:** The 24-bit absolute send time extension wraps every 64 seconds. Not handling this causes massive timing errors.
-
-**Why it happens:** abs-send-time uses 6.18 fixed-point format in 24 bits, giving 64-second range.
-
-**Consequences:**
-- Every 64 seconds, potential for spurious delay spikes
-- Intermittent bandwidth drops on long calls
-
-**Prevention:**
-- Track expected time and detect wraparound
-- Formula: `abs_send_time_24 = (ntp_timestamp_64 >> 14) & 0x00ffffff`
-- When new timestamp < old timestamp by large margin, add 2^24
-
-**Detection:** Test calls longer than 2-3 minutes. Watch for periodic bandwidth estimation errors every ~64 seconds.
-
-**Phase:** Extension parsing (Phase 1)
-
----
-
-### High: Monotonic vs Wall Clock Confusion in Go
-
-**What goes wrong:** Using `time.Time` comparisons that accidentally strip monotonic readings, causing incorrect elapsed time calculations.
-
-**Why it happens:** Go's `time.Now()` includes both wall clock and monotonic clock. Certain operations (UTC(), In(), Round(), Truncate()) strip the monotonic component.
-
-**Consequences:**
-- Clock synchronization events (NTP adjustments) cause timing discontinuities
-- Elapsed time calculations become wrong by seconds
-- Spurious congestion detection after system clock changes
-
-**Prevention:**
-- Use `time.Since(start)` for elapsed time, not `time.Now().Sub(start)` after transformations
-- Never apply UTC(), In(), Round(), Truncate() to times used for duration calculation
-- Consider storing arrival times as monotonic offsets from session start
-- If you need to strip monotonic: `t = t.Round(0)` (do this intentionally, not accidentally)
-
-**Detection:** Change system clock during test. If bandwidth estimate goes haywire, you have wall clock leakage.
-
-**Phase:** All timing code (ongoing)
-
----
-
-### High: Arrival Time vs System Time Divergence
-
-**What goes wrong:** System time and packet arrival timestamps diverge, causing estimation errors that compound over time.
-
-**Why it happens:** libwebrtc tracks this with `kArrivalTimeOffsetThresholdMs`. When system time and arrival time drift apart (due to clock drift or scheduling delays), the estimation becomes unreliable.
-
-**Consequences:**
-- Gradual degradation of estimate accuracy
-- Eventually, complete misestimation
-
-**Prevention:**
-- Track difference between system time and computed arrival time
-- Reset state when divergence exceeds threshold (libwebrtc uses ~3 seconds)
-- Log warnings when reset occurs for debugging
-
-**Phase:** Inter-arrival state management (Phase 1)
-
----
-
-### Medium: Clock Rate Conversion Errors
-
-**What goes wrong:** RTP timestamp deltas are converted to time deltas using wrong clock rate, causing systematic under/over-estimation of delays.
-
-**Why it happens:** Different media types use different clock rates (video: typically 90kHz, audio: 48kHz or others). Using wrong rate or hardcoding a value causes errors.
-
-**Consequences:**
-- Systematic bias in delay estimation
-- Works for one media type but fails for others
-
-**Prevention:**
-- Get clock rate from SDP negotiation
-- Video is almost always 90000 Hz but don't hardcode
-- Audio varies: 48000, 44100, 16000, 8000 common
-- Conversion: `time_delta_ms = timestamp_delta * 1000 / clockrate`
-
-**Phase:** Media type handling (Phase 2)
-
----
-
-## Performance Pitfalls
-
-### Critical: Per-Packet Allocations
-
-**What goes wrong:** Allocating memory for each incoming RTP packet causes GC pressure that introduces latency spikes.
-
-**Why it happens:** Creating new structs, slices, or maps for each packet in the hot path.
-
-**Consequences:**
-- GC pauses cause jitter in processing
-- At high packet rates (>1000 pps), GC overhead dominates
-- Unpredictable latency spikes affect estimation accuracy
-
-**Prevention:**
-- Use `sync.Pool` for packet metadata structures
-- Pre-allocate slices with expected capacity
-- Avoid closures in hot paths (they allocate)
-- Pass buffers into functions rather than returning new slices
-- Profile with `go tool pprof` focusing on allocs
-
-**Detection:** Run with `GODEBUG=gctrace=1`. Watch for frequent GC at high packet rates. Target: <1 alloc per packet in steady state.
-
-**Phase:** Performance optimization (Phase 3)
-
----
-
-### High: Lock Contention on Estimation State
-
-**What goes wrong:** Multiple goroutines contend on locks protecting estimation state, causing latency and throughput problems.
-
-**Why it happens:** Typical pattern: one goroutine receives packets and updates state, another reads estimates for REMB generation. Naive mutex usage creates contention.
-
-**Consequences:**
-- Packet processing latency increases under load
-- REMB feedback delayed, reducing control loop effectiveness
-- Throughput bottleneck
-
-**Prevention:**
-- Use read-write locks (`sync.RWMutex`) where appropriate
-- Consider lock-free designs with atomic operations for simple counters
-- Batch state updates rather than per-packet locking
-- Keep critical sections minimal
-
-**Detection:** Profile with `go tool pprof` for mutex contention. Look for goroutines blocked on mutex in traces.
-
-**Phase:** Concurrency design (Phase 1-2)
-
----
-
-### Medium: Time Function Call Overhead
-
-**What goes wrong:** Calling `time.Now()` for every packet adds measurable overhead at high packet rates.
-
-**Why it happens:** `time.Now()` involves system calls on some platforms.
-
-**Consequences:**
-- At 10,000+ packets/second, time calls become significant overhead
-- Adds microseconds per packet
-
-**Prevention:**
-- Batch timestamp queries: get time once per group of packets
-- Consider coarser timing (per-millisecond buckets)
-- Cache current time with periodic refresh for non-critical paths
-
-**Detection:** Benchmark with and without time calls. Significant at >10k pps.
-
-**Phase:** Performance optimization (Phase 3)
-
----
-
-## Interop Pitfalls
-
-### Critical: REMB Packet Format Errors
-
-**What goes wrong:** REMB packets are malformed and rejected by libwebrtc/Chrome, causing bandwidth estimate to be ignored.
-
-**Why it happens:**
-- Wrong FMT (should be 15) or PT (should be 206)
-- Missing "REMB" magic bytes
-- Incorrect mantissa/exponent encoding
-- Wrong SSRC handling
-
-**Consequences:**
-- Chrome/libwebrtc silently ignores REMB
-- Sender never receives feedback
-- Quality degrades due to no congestion control
-
-**Prevention:**
-REMB format must be exact:
-```
-- PT = 206 (PSFB)
-- FMT = 15
-- Unique identifier: 0x52454D42 ("REMB")
-- Num SSRC: number of SSRCs (typically 1)
-- BR Exp: 6 bits (0-63)
-- BR Mantissa: 18 bits
-- Bitrate = mantissa * 2^exp
-```
-
-**Detection:** Capture REMB packets in Wireshark. Verify structure matches draft-alvestrand-rmcat-remb-03. Test against Chrome and check webrtc-internals shows received REMB.
-
-**Phase:** REMB generation (Phase 2)
-
----
-
-### High: Absolute Capture Time Extension Parsing
-
-**What goes wrong:** Absolute capture time extension is parsed incorrectly or not found in packets.
-
-**Why it happens:**
-- Extension not negotiated in SDP
-- Wrong extension ID (must match SDP negotiated value)
-- Parsing errors in 64-bit NTP timestamp format
-- Not handling interpolation when extension is absent
-
-**Consequences:**
-- Falls back to less accurate timing
-- Cross-stream synchronization breaks
-- Bandwidth estimation less accurate
-
-**Prevention:**
-- Parse extension ID from SDP (not hardcoded)
-- Format: 64-bit NTP timestamp (32.32 fixed point, seconds since 1900)
-- When absent, interpolate from RTP timestamp and last known capture time
-- Send at least every second to mitigate clock drift
-
-**Detection:** Log when extension is present/absent. Verify parsed values are reasonable NTP timestamps.
-
-**Phase:** Extension parsing (Phase 1)
-
----
-
-### High: Absolute Send Time Extension Parsing
-
-**What goes wrong:** The 24-bit absolute send time value is parsed or converted incorrectly.
-
-**Why it happens:**
-- Endianness errors (big-endian on wire)
-- Wrong bit extraction
-- Conversion to milliseconds uses wrong formula
-
-**Consequences:**
-- Timing completely wrong
-- Bandwidth estimation fails
-
-**Prevention:**
-- Parse as big-endian 24-bit value
-- Format: 6.18 fixed-point (6 bits seconds, 18 bits fraction)
-- Conversion: `seconds = value / (1 << 18)`
-- Reference: `abs_send_time_24 = (ntp_timestamp_64 >> 14) & 0x00ffffff`
-
-**Detection:** Compare parsed values against Chrome's webrtc-internals. Should match closely.
-
-**Phase:** Extension parsing (Phase 1)
-
----
-
-### Medium: SSRC Handling in Multi-Stream Scenarios
-
-**What goes wrong:** With multiple video streams (simulcast), REMB is sent for wrong SSRC or calculations mix up streams.
-
-**Why it happens:** Each stream has its own SSRC. Estimation may need to be per-stream or aggregate. Firefox has known bugs with REMB SSRC selection.
-
-**Consequences:**
-- REMB feedback applies to wrong stream
-- One stream starved while another is fine
-- Incorrect total bandwidth calculation
-
-**Prevention:**
-- Track which SSRCs are being estimated
-- REMB packet includes list of SSRCs it applies to
-- Consider whether estimate is per-stream or aggregate
-- Test with simulcast scenarios
-
-**Phase:** Multi-stream support (Phase 3)
-
----
-
-### Medium: Chrome Behavior Quirks
-
-**What goes wrong:** Implementation works in isolation but fails with Chrome due to undocumented behavior.
-
-**Why it happens:**
-- Chrome doesn't send REMB for receive-only peer connections (no local stream)
-- TWCC compound packet handling issues
-- Specific timing expectations
-
-**Consequences:**
-- Works with Firefox but not Chrome, or vice versa
-- Interop failures in production
-
-**Prevention:**
-- Test extensively with Chrome specifically
-- Monitor webrtc-internals for feedback reception
-- Review Chrome-specific issues on bugs.chromium.org/p/webrtc
-
-**Phase:** Interop testing (Phase 3)
-
----
-
-## Testing Pitfalls
-
-### Critical: Not Comparing Against libwebrtc Reference
-
-**What goes wrong:** Implementation "works" but produces different estimates than libwebrtc, causing interop problems.
-
-**Why it happens:** Subtle algorithm differences compound over time. GCC is complex enough that small errors cause large divergence.
-
-**Consequences:**
-- Different behavior than expected by senders
-- May over or under-estimate compared to Chrome
-- Hard to debug customer issues
-
-**Prevention:**
-- Record packet traces (arrival time, RTP timestamp, extension values)
-- Feed same trace to libwebrtc and your implementation
-- Compare delay gradients, threshold values, rate estimates over time
-- Use Chrome's RTC event log visualizer for comparison
-- Acceptable divergence: <10% after stabilization
-
-**Detection:** Run side-by-side comparison tests. Log intermediate values (delay gradient, threshold, state) for debugging.
-
-**Phase:** Validation (all phases)
-
----
-
-### High: Testing Only With Smooth Traffic
-
-**What goes wrong:** Tests use smooth, constant-rate traffic that doesn't exercise edge cases.
-
-**Why it happens:** Easy to generate smooth traffic. Real traffic is bursty, variable, and lossy.
-
-**Consequences:**
-- Works in lab, fails in production
-- Edge cases (burst, loss, reordering) not covered
-
-**Prevention:**
-Test with:
-- Bursty traffic (video keyframes cause bursts)
-- Packet loss (2%, 5%, 10%)
-- Packet reordering
-- Competing TCP traffic
-- Variable bandwidth (tc netem)
-- Long duration (>12 hours for wraparound)
-
-**Phase:** Test development (all phases)
-
----
-
-### High: No Network Impairment Testing
-
-**What goes wrong:** Only tested on localhost or LAN, not under realistic network conditions.
-
-**Why it happens:** Setting up network impairment is extra effort.
-
-**Consequences:**
-- Algorithm works on perfect network
-- Fails under real-world conditions (loss, delay, jitter)
-
-**Prevention:**
-Use network impairment tools:
+**Detection:**
 ```bash
-# Linux tc/netem
-tc qdisc add dev eth0 root netem delay 50ms 10ms loss 2%
+# Before migration
+go test -bench=ZeroAlloc -benchmem ./pkg/bwe/...
+# Expected: 0 allocs/op across all core benchmarks
 
-# macOS Network Link Conditioner (System Preferences)
-# Or dnctl/pfctl
+# After migration
+go test -bench=ZeroAlloc -benchmem ./pkg/bwe/...
+# Compare: Any increase in allocs/op is a regression
 ```
 
-Test scenarios:
-- 100ms RTT, 0% loss (good wifi)
-- 200ms RTT, 2% loss (mobile)
-- 50ms RTT, 5% loss (congested)
-- Variable delay (jitter)
+**Prevention:**
 
-**Phase:** Integration testing (Phase 3)
+1. **For REMB building (non-hot path):** Acceptable to have 1-2 allocs/op since REMB is sent at 1 Hz, not per-packet
+
+2. **For RTP parsing (hot path):** Use Pion's zero-allocation patterns:
+   ```go
+   // GOOD: Reuse header, no allocation
+   var header rtp.Header
+   if _, err := header.Unmarshal(raw); err != nil { ... }
+
+   // BAD: Creates new header each time
+   header := &rtp.Header{}
+   if _, err := header.Unmarshal(raw); err != nil { ... }
+   ```
+
+3. **For extension parsing:** Pion's `header.GetExtension(id)` returns a slice into existing buffer - zero allocation if done correctly
+
+4. **Buffer pooling strategy:**
+   ```go
+   // Current code has sync.Pool for PacketInfo - keep this
+   var packetInfoPool = sync.Pool{
+       New: func() interface{} { return &bwe.PacketInfo{} },
+   }
+
+   // If REMB Marshal/Unmarshal becomes hot path, pool buffers:
+   var rembBufPool = sync.Pool{
+       New: func() interface{} { return make([]byte, 0, 64) },
+   }
+   ```
+
+**Benchmark verification points:**
+- `BenchmarkBandwidthEstimator_OnPacket_ZeroAlloc`: MUST remain 0 allocs/op
+- `BenchmarkDelayEstimator_OnPacket_ZeroAlloc`: MUST remain 0 allocs/op
+- `BenchmarkInterArrivalCalculator_AddPacket_ZeroAlloc`: MUST remain 0 allocs/op
+- `BenchmarkProcessRTP_Allocations`: Currently 2 allocs/op (104 B) - acceptable as this is interceptor overhead, not estimator
 
 ---
 
-### Medium: Missing Long-Duration Tests
+### Critical 2: REMB Encoding Precision Changes
 
-**What goes wrong:** Tests run for seconds/minutes. Bugs manifest after hours.
+**What breaks:** Pion's `ReceiverEstimatedMaximumBitrate` uses `float32` for bitrate, while current implementation uses `uint64`. Precision loss or rounding differences could break Chrome interop.
 
-**Why it happens:** Long tests are slow and expensive. CI/CD prefers fast tests.
+**Where it happens:**
+```go
+// Current implementation
+type REMBPacket struct {
+    Bitrate uint64  // Full 64-bit precision
+    ...
+}
 
-**Consequences:**
-- Timestamp wraparound bugs (6-13 hours)
-- Memory leaks
-- State accumulation issues
+// Pion implementation
+type ReceiverEstimatedMaximumBitrate struct {
+    Bitrate float32  // Float32 loses precision above ~16M
+    ...
+}
+```
+
+**Why it matters:**
+- **Validated behavior:** Current tests verify bitrate encoding within 1% tolerance for high bitrates (up to 10 Gbps)
+- **Float32 precision limit:** ~7 decimal digits of precision
+  - At 1 Gbps: float32 has ~2 kbps precision - acceptable
+  - At 10 Gbps: float32 has ~20 kbps precision - still acceptable but worse
+- **Mantissa/exponent encoding:** REMB uses 6-bit exponent + 18-bit mantissa. Float32 conversion must preserve this
+
+**Detection:**
+```go
+// Test from remb_test.go that MUST pass
+func TestBuildREMB_BitrateEncodingPrecision(t *testing.T) {
+    testCases := []struct {
+        bitrate  uint64
+        maxError float64
+    }{
+        {"1 Gbps", 1_000_000_000, 0.01},
+        {"5 Gbps", 5_000_000_000, 0.01},
+        {"10 Gbps", 10_000_000_000, 0.01},
+    }
+    // All must encode/decode within maxError tolerance
+}
+```
 
 **Prevention:**
-- Run 24-hour soak tests periodically
-- Accelerate time in unit tests where possible
-- Monitor memory usage over time
-- Include wraparound-specific unit tests with simulated timestamps
 
-**Phase:** Stability testing (Phase 4)
+1. **Keep existing test suite:** All `TestBuildREMB_*` tests must pass with Pion types
+
+2. **Verify float32 conversion doesn't lose critical bits:**
+   ```go
+   // When converting uint64 → float32 for Pion
+   bitrate := uint64(5_000_000_000)  // 5 Gbps
+
+   // SAFE: Direct conversion preserves enough precision for REMB
+   pionBitrate := float32(bitrate)
+
+   // VERIFY: Round-trip error is acceptable
+   recovered := uint64(pionBitrate)
+   relError := float64(abs(recovered - bitrate)) / float64(bitrate)
+   assert.Less(t, relError, 0.01) // <1% error
+   ```
+
+3. **Run existing Chrome interop test:** `TestREMBPacket_ChromeInterop` (if exists) must pass - Chrome must accept and act on REMB
+
+4. **Edge cases to verify:**
+   - Zero bitrate: REMB can't represent exact zero (mantissa/exponent encoding)
+   - Very low bitrate: 10 kbps
+   - Very high bitrate: 10 Gbps
+   - All must decode within 1% of original
+
+**Comparison to validate:**
+```bash
+# Before: Current BuildREMB output
+go test -v -run=TestBuildREMB_BitrateEncodingPrecision
+
+# After: Pion-based BuildREMB output
+go test -v -run=TestBuildREMB_BitrateEncodingPrecision
+
+# Diff should show same precision tolerance
+```
 
 ---
 
-## Prevention Strategies Summary
+### Critical 3: Timestamp Wraparound Behavior Changes
 
-### Phase 1: Core Algorithm
-1. Implement adaptive threshold (K_u = 0.01, K_d = 0.00018)
-2. Implement burst grouping (5ms threshold, 100ms max)
-3. Handle 32-bit timestamp wraparound
-4. Handle 24-bit abs-send-time wraparound
-5. Use monotonic time for all duration calculations
-6. Pre-allocate data structures, use sync.Pool
+**What breaks:** Current implementation has custom `UnwrapAbsSendTime()` with validated 24-bit wraparound logic. Switching to Pion utilities might have different edge case handling.
 
-### Phase 2: Rate Control & REMB
-1. Implement correct AIMD state machine
-2. Generate spec-compliant REMB packets
-3. Parse extensions from SDP-negotiated IDs
-4. Test REMB reception in Chrome webrtc-internals
+**Where it happens:**
+```go
+// Current implementation (timestamp.go:44-61)
+func UnwrapAbsSendTime(prev, curr uint32) int64 {
+    diff := int32(curr) - int32(prev)
+    halfRange := int32(AbsSendTimeMax / 2)  // 8388608
 
-### Phase 3: Integration & Performance
-1. Profile for allocations (target <1 per packet)
-2. Test with network impairment
-3. Test with competing TCP traffic
-4. Test multi-stream (simulcast) scenarios
-5. Compare against libwebrtc reference
+    if diff > halfRange {
+        diff -= int32(AbsSendTimeMax)
+    } else if diff < -halfRange {
+        diff += int32(AbsSendTimeMax)
+    }
+    return int64(diff)
+}
+```
 
-### Phase 4: Stability
-1. Run 24-hour soak tests
-2. Test timestamp wraparound explicitly
-3. Monitor memory for leaks
-4. Validate interop with Chrome, Firefox, Safari
+**Why it matters:**
+- **Validated:** 24-hour soak test (04-05) specifically validates wraparound at 64-second boundary
+- **Critical edge cases tested:**
+  - Exactly at boundary: `prev=16777215, curr=0` → `want=1`
+  - Just over half range: `prev=0, curr=8388609` → `want=-8388607` (backward wrap)
+  - Long duration: Wraparound every 64 seconds for hours
+- **Failure mode:** Incorrect wraparound causes massive delay spikes, bandwidth crashes to minimum
+
+**Detection:**
+```go
+// Tests that MUST pass (from timestamp_test.go)
+func TestUnwrapAbsSendTime(t *testing.T) {
+    // All 15 test cases must pass, especially:
+    // - wraparound forward: prev=16777000, curr=200 → want=416
+    // - wraparound backward: prev=200, curr=16777000 → want=-416
+    // - exactly at boundary: prev=16777215, curr=0 → want=1
+    // - just over half range: prev=0, curr=8388609 → want=-8388607
+}
+
+// Long-duration test that MUST pass
+func TestTimestampWraparound_24Hour(t *testing.T) {
+    // Simulates 24 hours of operation
+    // Wraparound happens every 64 seconds
+    // Must NOT show spurious delay spikes
+}
+```
+
+**Prevention:**
+
+1. **If keeping custom implementation:** No change, already validated
+
+2. **If switching to Pion utilities:**
+   - Verify Pion has equivalent wraparound handling for 24-bit abs-send-time
+   - Run full timestamp test suite against Pion implementation
+   - **Fallback:** Keep custom `UnwrapAbsSendTime()` if Pion doesn't handle 24-bit format
+
+3. **Soak test verification:**
+   ```bash
+   # MUST pass before and after migration
+   go test -v -run=TestTimestampWraparound_24Hour
+   go test -v -run=TestAcceleratedSoak_TimestampWrap
+   ```
+
+4. **Edge case checklist:**
+   - [ ] Wraparound at exactly 2^24 boundary
+   - [ ] Half-range detection (forward vs backward)
+   - [ ] Multiple wraparounds in succession
+   - [ ] Large time gaps (>32 seconds)
+
+**Risk assessment:**
+- **LOW** if keeping custom timestamp handling
+- **MEDIUM** if switching to Pion - requires thorough validation
+- **HIGH** if Pion doesn't support 24-bit abs-send-time format (use custom implementation)
+
+---
+
+## High-Severity Pitfalls
+
+### High 1: RTCP Compound Packet Handling in Interceptor
+
+**What breaks:** Current code uses `rtcp.Unmarshal(data)` which returns `[]rtcp.Packet` - may contain multiple packets in compound RTCP. Not handling this breaks REMB sending.
+
+**Where it happens:**
+```go
+// Current interceptor code (interceptor.go:259-262)
+func (i *BWEInterceptor) maybeSendREMB(now time.Time) {
+    data, shouldSend, err := i.estimator.MaybeBuildREMB(now)
+    // ...
+    pkts, err := rtcp.Unmarshal(data)  // Returns []rtcp.Packet
+    // Bug potential: pkts might have length > 1 in compound packet
+}
+```
+
+**Why it matters:**
+- RTCP can bundle multiple packets (compound packets)
+- `rtcp.Unmarshal()` returns a slice, not a single packet
+- Current code assumes single REMB packet, but Pion might add additional packets (e.g., SDES)
+- Failing to handle slice properly causes panic or dropped packets
+
+**Detection:**
+```go
+// Test for compound packet handling
+func TestREMB_CompoundPacket(t *testing.T) {
+    // Create REMB + SDES compound packet
+    remb := &rtcp.ReceiverEstimatedMaximumBitrate{...}
+    sdes := &rtcp.SourceDescription{...}
+
+    data, _ := rtcp.Marshal([]rtcp.Packet{remb, sdes})
+
+    // Verify unmarshal handles multiple packets
+    pkts, err := rtcp.Unmarshal(data)
+    assert.NoError(t, err)
+    assert.Len(t, pkts, 2)  // Should detect both
+}
+```
+
+**Prevention:**
+
+1. **Defensive unmarshal:**
+   ```go
+   pkts, err := rtcp.Unmarshal(data)
+   if err != nil {
+       return
+   }
+
+   // GOOD: Handle all packets
+   _, err = writer.Write(pkts, nil)
+
+   // BAD: Only handles first packet
+   // _, err = writer.Write([]rtcp.Packet{pkts[0]}, nil)
+   ```
+
+2. **Trust Pion's contract:** `rtcp.Unmarshal()` always returns a slice, even for single packet
+
+3. **Test with actual Chrome RTCP:** Capture real RTCP from Chrome, feed to unmarshal, verify handling
+
+**Current code status:** Appears correct (uses `pkts` directly), but verify no assumptions about slice length
+
+---
+
+### High 2: Extension ID Race During Initialization
+
+**What breaks:** Extension IDs are set when `BindRemoteStream` is called, but packets may arrive before this happens. Processing packets with uninitialized extension IDs causes silent data loss.
+
+**Where it happens:**
+```go
+// Current interceptor code (interceptor.go:134-139)
+func (i *BWEInterceptor) BindRemoteStream(info *interceptor.StreamInfo, reader interceptor.RTPReader) {
+    // Extension IDs set here via atomic operations
+    if absID := FindAbsSendTimeID(info.RTPHeaderExtensions); absID != 0 {
+        i.absExtID.CompareAndSwap(0, uint32(absID))
+    }
+    // But packets might be processed BEFORE this completes
+}
+```
+
+**Why it matters:**
+- **Timing uncertainty:** No guarantee BindRemoteStream is called before first packet
+- **Silent failure:** If extension ID is 0, packet is skipped without error (line 204: `if sendTime == 0 { return }`)
+- **Lost calibration:** Early packets are important for initial bandwidth estimate
+
+**Detection:**
+```go
+// Add logging to detect this condition
+func (i *BWEInterceptor) processRTP(raw []byte, ssrc uint32) {
+    absID := uint8(i.absExtID.Load())
+    captureID := uint8(i.captureExtID.Load())
+
+    if absID == 0 && captureID == 0 {
+        // WARNING: Processing packet before extension IDs set
+        // This should happen rarely (only for first few packets)
+        log.Warn("Extension IDs not initialized, skipping packet")
+    }
+}
+```
+
+**Prevention:**
+
+1. **Current code is correct:** Uses atomic `CompareAndSwap` to handle race
+
+2. **Accept early packet loss:** First few packets before BindRemoteStream are OK to skip
+
+3. **Don't block waiting for IDs:** Would deadlock the RTP pipeline
+
+4. **Monitor in production:** Track how often extension IDs are uninitialized when processRTP is called
+
+**Risk assessment:** LOW - current code handles this correctly, just document the behavior
+
+---
+
+### High 3: REMB Scheduler State Synchronization
+
+**What breaks:** `BandwidthEstimator` and `REMBScheduler` share state. Migrating one without the other causes desync, leading to duplicate REMB sends or missed REMB.
+
+**Where it happens:**
+```go
+// Current code links estimator and scheduler (interceptor.go:93-98)
+rembConfig := bwe.DefaultREMBSchedulerConfig()
+rembConfig.Interval = i.rembInterval
+rembConfig.SenderSSRC = i.senderSSRC
+i.rembScheduler = bwe.NewREMBScheduler(rembConfig)
+i.estimator.SetREMBScheduler(i.rembScheduler)  // Links them
+```
+
+**Why it matters:**
+- **REMBScheduler manages when to send:** Tracks last send time, enforces interval
+- **BandwidthEstimator manages what to send:** Current estimate, SSRC list
+- **Breaking the link:** If Pion has its own REMB scheduler, might conflict with existing one
+
+**Detection:**
+```go
+// Test REMB sending rate
+func TestREMB_SendingInterval(t *testing.T) {
+    // Configure 1s interval
+    // Send packets for 5 seconds
+    // Verify exactly 5 REMB packets sent (not 0, not 10)
+
+    assert.Equal(t, 5, len(capturedREMBs))
+}
+```
+
+**Prevention:**
+
+1. **Keep existing architecture:** Don't replace REMBScheduler, only swap REMB marshalling to Pion types
+
+2. **If consolidating with Pion scheduler:**
+   - Verify interval handling matches current behavior
+   - Ensure no duplicate sends (current + Pion)
+   - Test for missed sends (neither fires)
+
+3. **Integration test:**
+   ```bash
+   # Existing test should pass
+   go test -v -run=TestBWEInterceptor_REMBSending
+   ```
+
+**Recommendation:** Keep current REMBScheduler, only use Pion for `rtcp.ReceiverEstimatedMaximumBitrate` marshalling
+
+---
+
+## Medium-Severity Pitfalls
+
+### Medium 1: Extension Header Parsing API Differences
+
+**What breaks:** Current code uses `rtp.Header.GetExtension(id)` which returns `[]byte`. Pion might have alternate APIs with different semantics (e.g., returning parsed structs).
+
+**Where it happens:**
+```go
+// Current code (interceptor.go:182-184)
+if ext := header.GetExtension(absID); len(ext) >= 3 {
+    sendTime, _ = bwe.ParseAbsSendTime(ext)
+}
+```
+
+**Why it matters:**
+- `GetExtension()` returns a slice into the original packet buffer - zero copy
+- If switching to a parsed extension API, might allocate or copy data
+- Different APIs might handle one-byte vs two-byte extension profiles differently
+
+**Prevention:**
+
+1. **Current API is correct:** `GetExtension(id) []byte` is the right level of abstraction
+
+2. **Verify zero-copy behavior preserved:**
+   ```go
+   BenchmarkRTPHeader_GetExtension_Allocations-10  1000000000  0.6556 ns/op  0 B/op  0 allocs/op
+   // MUST remain 0 allocs after migration
+   ```
+
+3. **Keep custom ParseAbsSendTime/ParseAbsCaptureTime:** They handle raw bytes correctly
+
+**Risk:** LOW - current API is optimal, no reason to change
+
+---
+
+### Medium 2: Error Handling Semantics Changes
+
+**What breaks:** Pion's `rtcp.Unmarshal()` and `rtcp.Marshal()` may return different errors than custom implementation, causing unexpected error handling.
+
+**Where it happens:**
+```go
+// Current REMB parsing (remb.go:46-49)
+pkt := &rtcp.ReceiverEstimatedMaximumBitrate{}
+if err := pkt.Unmarshal(data); err != nil {
+    return nil, err  // What errors can Pion return here?
+}
+```
+
+**Why it matters:**
+- Current code may have error handling tuned to specific error types
+- Pion might return different errors for same conditions
+- Could break error recovery logic or logging
+
+**Prevention:**
+
+1. **Review error paths:** Check what errors current tests expect
+
+2. **Test invalid inputs:**
+   ```go
+   // From remb_test.go
+   func TestParseREMB_InvalidData(t *testing.T) {
+       testCases := []struct {
+           name string
+           data []byte
+       }{
+           {"empty", []byte{}},
+           {"too short", []byte{0x8F, 0xCE}},
+           {"wrong PT", []byte{...}},
+       }
+       // All should return errors - verify Pion returns errors too
+   }
+   ```
+
+3. **Don't over-specify errors:** Just check `err != nil`, not specific error messages
+
+**Risk:** LOW - most code just checks `err != nil`
+
+---
+
+### Medium 3: Bitrate Type Conversions uint64 ↔ float32
+
+**What breaks:** Repeated conversions between `uint64` (internal) and `float32` (Pion) accumulate rounding errors or lose precision.
+
+**Where it happens:**
+```go
+// Internal estimator uses uint64
+estimate := estimator.GetEstimate()  // uint64
+
+// Convert to Pion float32 for REMB
+remb := &rtcp.ReceiverEstimatedMaximumBitrate{
+    Bitrate: float32(estimate),  // Conversion 1
+}
+
+// If round-tripping:
+recovered := uint64(remb.Bitrate)  // Conversion 2
+// Repeated conversions compound error
+```
+
+**Why it matters:**
+- Single conversion: acceptable precision loss
+- Round-trip conversion: precision loss compounds
+- Estimator state should stay uint64 to avoid accumulation
+
+**Prevention:**
+
+1. **One-way conversion only:** Internal state stays uint64, only convert to float32 for Pion marshal
+
+2. **Never store float32 back to estimator:**
+   ```go
+   // GOOD: One-way conversion
+   bitrate := estimator.GetEstimate()  // uint64
+   remb := &rtcp.ReceiverEstimatedMaximumBitrate{
+       Bitrate: float32(bitrate),
+   }
+
+   // BAD: Round-trip conversion
+   bitrate := estimator.GetEstimate()
+   remb := &rtcp.ReceiverEstimatedMaximumBitrate{
+       Bitrate: float32(bitrate),
+   }
+   estimator.SetEstimate(uint64(remb.Bitrate))  // WRONG
+   ```
+
+3. **Test precision preservation:**
+   ```bash
+   go test -v -run=TestBuildREMB_BitrateEncodingPrecision
+   ```
+
+**Risk:** LOW - current architecture doesn't round-trip, just one-way conversion for REMB
+
+---
+
+### Medium 4: Marshal/MarshalTo Allocation Patterns
+
+**What breaks:** Using `rtcp.Marshal()` allocates a new buffer every time. For high-frequency REMB sending, should use `MarshalSize()` + `MarshalTo()` with pooled buffers.
+
+**Where it happens:**
+```go
+// Pion provides two patterns:
+
+// Pattern 1: Allocates (simple, but 1 alloc)
+data, err := pkt.Marshal()
+
+// Pattern 2: Zero-alloc (reuse buffer)
+size := pkt.MarshalSize()
+buf := bufferPool.Get().([]byte)
+if cap(buf) < size {
+    buf = make([]byte, size)
+}
+buf = buf[:size]
+pkt.MarshalTo(buf)
+```
+
+**Why it matters:**
+- REMB is sent at 1 Hz (low frequency) - 1 alloc/send is acceptable
+- But if REMB frequency increases (e.g., 10 Hz), allocations become noticeable
+- Current `BuildREMB` shows `1 alloc/op (24 B)` - acceptable baseline
+
+**Prevention:**
+
+1. **For v1.1:** Accept 1 alloc/op for REMB marshalling (only 1 Hz)
+
+2. **For future optimization:** Implement buffer pool if REMB frequency increases:
+   ```go
+   var rembBufPool = sync.Pool{
+       New: func() interface{} {
+           return make([]byte, 0, 64)  // Typical REMB size
+       },
+   }
+
+   func buildREMBZeroAlloc(pkt *rtcp.ReceiverEstimatedMaximumBitrate) []byte {
+       size := pkt.MarshalSize()
+       buf := rembBufPool.Get().([]byte)
+       if cap(buf) < size {
+           buf = make([]byte, size)
+       }
+       buf = buf[:size]
+       pkt.MarshalTo(buf)
+       return buf
+   }
+   ```
+
+3. **Benchmark comparison:**
+   ```bash
+   # Current baseline
+   BenchmarkBuildREMB-10  53202280  21.34 ns/op  24 B/op  1 allocs/op
+
+   # After Pion migration - should be comparable
+   ```
+
+**Risk:** LOW - REMB frequency is low (1 Hz), 1 alloc/op is acceptable
+
+**Sources:**
+- [Pion RTCP MarshalSize documentation](https://pkg.go.dev/github.com/pion/rtcp) - MarshalSize returns size for zero-alloc marshaling
+- [Pion performance blog](https://pion.ly/blog/sctp-and-rack/) - RACK improvements showing allocation reduction strategies
+
+---
+
+## Low-Severity Pitfalls
+
+### Low 1: Test Coverage Gaps During Refactor
+
+**What breaks:** Refactoring to Pion types might bypass existing tests if tests are too specific to implementation details.
+
+**Prevention:**
+
+1. **Review test suite structure:**
+   - Behavior tests (should pass): Test outputs for given inputs
+   - Implementation tests (may break): Test internal structures
+
+2. **Keep behavior tests intact:** All validation tests must pass without modification
+
+3. **Update implementation tests:** If tests check specific byte layouts or internal types, update for Pion
+
+**Risk:** LOW - test suite is comprehensive, mostly behavior-focused
+
+---
+
+### Low 2: Dependency Version Pinning
+
+**What breaks:** Pion libraries are at specific versions. Upgrading could introduce breaking changes.
+
+**Prevention:**
+
+1. **Pin versions in go.mod:**
+   ```
+   github.com/pion/rtcp v1.2.16
+   github.com/pion/rtp v1.10.0
+   ```
+
+2. **Before upgrading Pion:**
+   - Review changelog for breaking changes
+   - Run full test suite
+   - Re-run benchmarks
+
+**Risk:** LOW - standard dependency management
+
+---
+
+### Low 3: Documentation Drift
+
+**What breaks:** Code comments reference custom implementations. After migration, comments become misleading.
+
+**Prevention:**
+
+1. **Update comments when changing code:**
+   ```go
+   // OLD comment
+   // BuildREMB creates a REMB RTCP packet using manual encoding
+
+   // NEW comment
+   // BuildREMB creates a REMB RTCP packet using pion/rtcp
+   ```
+
+2. **Review all docstrings:** Search for references to "custom", "manual", "hand-rolled"
+
+**Risk:** LOW - cosmetic issue, doesn't affect behavior
+
+---
+
+## Prevention Strategy Summary
+
+### Phase-Specific Recommendations
+
+**Phase 1: REMB Marshalling Migration**
+1. ✅ Replace `BuildREMB` internals with `rtcp.ReceiverEstimatedMaximumBitrate`
+2. ✅ Keep REMBPacket wrapper for compatibility
+3. ✅ Run all `TestBuildREMB_*` tests - MUST pass
+4. ✅ Run benchmark - accept 1 alloc/op (currently 1, so no regression)
+5. ✅ Verify Chrome interop - REMB must be accepted
+
+**Phase 2: Extension Parsing (If Applicable)**
+1. ⚠️ Keep custom `ParseAbsSendTime/ParseAbsCaptureTime` - already zero-alloc
+2. ⚠️ Keep custom `UnwrapAbsSendTime` - validated wraparound logic
+3. ✅ Use Pion's `rtp.Header.GetExtension()` - already in use, zero-alloc
+4. ✅ Run timestamp wraparound tests - MUST pass
+
+**Phase 3: Integration Validation**
+1. ✅ Run full benchmark suite - verify no allocation regressions
+2. ✅ Run 24-hour soak test - verify no long-term issues
+3. ✅ Run Chrome interop test - verify REMB acceptance
+4. ✅ Run validation test - verify estimates within 10% of reference
+
+---
+
+## Testing Checklist
+
+Before marking migration complete:
+
+### Allocation Tests
+- [ ] `BenchmarkBandwidthEstimator_OnPacket_ZeroAlloc` → 0 allocs/op
+- [ ] `BenchmarkDelayEstimator_OnPacket_ZeroAlloc` → 0 allocs/op
+- [ ] `BenchmarkInterArrivalCalculator_AddPacket_ZeroAlloc` → 0 allocs/op
+- [ ] `BenchmarkBuildREMB` → ≤1 alloc/op (acceptable for non-hot path)
+- [ ] `BenchmarkProcessRTP_Allocations` → ≤2 allocs/op (current baseline)
+
+### Behavioral Tests
+- [ ] `TestBuildREMB_BitrateEncodingPrecision` → All bitrates within 1% tolerance
+- [ ] `TestUnwrapAbsSendTime` → All 15 cases pass
+- [ ] `TestTimestampWraparound_24Hour` → No spurious delay spikes
+- [ ] `TestAcceleratedSoak_TimestampWrap` → Wraparound handled correctly
+- [ ] `TestREMBPacket_ChromeInterop` → Chrome accepts REMB (if exists)
+
+### Integration Tests
+- [ ] `TestBWEInterceptor_REMBSending` → Correct REMB rate (1 Hz)
+- [ ] `TestInterceptor_FullPath` → End-to-end packet processing
+- [ ] Chrome webrtc-internals shows received REMB
+
+### Long-Duration Tests
+- [ ] 24-hour soak test - no memory leaks, no estimation degradation
+- [ ] Memory profile - no unexpected allocations accumulating
+
+---
+
+## Migration Rollback Plan
+
+If migration introduces regressions:
+
+1. **Keep old implementation in separate file:** `remb_legacy.go`
+
+2. **Feature flag toggle:**
+   ```go
+   const usePionREMB = true  // Toggle to rollback
+
+   func BuildREMB(...) {
+       if usePionREMB {
+           return buildREMBPion(...)
+       }
+       return buildREMBLegacy(...)
+   }
+   ```
+
+3. **Revert steps:**
+   - Set `usePionREMB = false`
+   - Run tests to confirm legacy behavior restored
+   - Investigate regression before retry
 
 ---
 
 ## Sources
 
-**IETF Standards:**
-- [draft-ietf-rmcat-gcc-02](https://datatracker.ietf.org/doc/html/draft-ietf-rmcat-gcc-02) - Google Congestion Control Algorithm
-- [draft-alvestrand-rmcat-remb-03](https://datatracker.ietf.org/doc/html/draft-alvestrand-rmcat-remb-03) - REMB Packet Format
+**Codebase Analysis:**
+- `/Users/thesyncim/GolandProjects/bwe/pkg/bwe/remb.go` - Current REMB implementation using Pion types
+- `/Users/thesyncim/GolandProjects/bwe/pkg/bwe/timestamp.go` - Custom wraparound handling
+- `/Users/thesyncim/GolandProjects/bwe/pkg/bwe/benchmark_test.go` - Allocation baselines
+- `/Users/thesyncim/GolandProjects/bwe/pkg/bwe/validation_test.go` - Behavior validation
 
-**Academic Papers:**
-- [Congestion Control for Web Real-Time Communication (Carlucci et al.)](https://c3lab.poliba.it/images/c/c4/Gcc-TNET.pdf) - Adaptive threshold research
-- [Analysis and Design of GCC](https://c3lab.poliba.it/images/6/65/Gcc-analysis.pdf) - Algorithm analysis
+**Benchmark Data (2026-01-22):**
+- `BenchmarkBandwidthEstimator_OnPacket_ZeroAlloc`: 0 allocs/op ✓
+- `BenchmarkBuildREMB`: 1 alloc/op (24 B) - baseline
+- `BenchmarkParseREMB`: 2 allocs/op (56 B) - baseline
+- `BenchmarkProcessRTP_Allocations`: 2 allocs/op (104 B) - interceptor overhead
 
-**Implementation References:**
-- [libwebrtc inter_arrival.cc](https://github.com/webrtc-uwp/webrtc/blob/master/modules/remote_bitrate_estimator/inter_arrival.cc) - Burst grouping, reordering
-- [pion/rtp abssendtimeextension.go](https://github.com/pion/rtp/blob/master/abssendtimeextension.go) - Go extension parsing
-- [pion/interceptor TWCC issues](https://github.com/pion/interceptor/issues/159) - Known bugs
+**Pion Documentation:**
+- [Pion RTCP Package](https://pkg.go.dev/github.com/pion/rtcp) - ReceiverEstimatedMaximumBitrate API
+- [Pion RTCP ReceiverEstimatedMaximumBitrate source](https://github.com/pion/rtcp/blob/master/receiver_estimated_maximum_bitrate.go) - Implementation details
+- [Pion RTCP MarshalSize documentation](https://pkg.go.dev/github.com/pion/rtcp) - Zero-allocation marshaling pattern
+- [Pion RTP Package](https://pkg.go.dev/github.com/pion/rtp) - Header parsing APIs
+- [Pion SCTP performance blog](https://pion.ly/blog/sctp-and-rack/) - Allocation reduction strategies
 
-**WebRTC Documentation:**
-- [Absolute Capture Time](https://webrtc.googlesource.com/src/+/refs/heads/main/docs/native-code/rtp-hdrext/abs-capture-time/README.md)
-- [Absolute Send Time](https://webrtc.github.io/webrtc-org/experiments/rtp-hdrext/abs-send-time/)
-- [webrtcHacks - Bandwidth Probing](https://webrtchacks.com/probing-webrtc-bandwidth-probing-why-and-how-in-gcc/)
+**Test Infrastructure:**
+- `.planning/phases/04-optimization-validation/04-05-PLAN.md` - 24-hour soak test specification
+- `.planning/ROADMAP.md` - Phase 4 completion with soak test validation
 
-**Go Performance:**
-- [Go Memory Optimization](https://goperf.dev/01-common-patterns/gc/) - GC pressure reduction
-- [Go time package](https://pkg.go.dev/time) - Monotonic clock handling
-- [VictoriaMetrics - Monotonic Clock](https://victoriametrics.com/blog/go-time-monotonic-wall-clock/) - Wall vs monotonic time
+**Confidence:** HIGH - Based on direct codebase inspection, benchmark measurements, and Pion library documentation
