@@ -242,7 +242,7 @@ func (l *REMBLogger) BindRTCPWriter(writer interceptor.RTCPWriter) interceptor.R
 			if remb, ok := pkt.(*rtcp.ReceiverEstimatedMaximumBitrate); ok {
 				l.mu.Lock()
 				if uint64(remb.Bitrate) != l.lastEstimate {
-					log.Printf("REMB sent: estimate=%d bps, ssrcs=%v", remb.Bitrate, remb.SSRCs)
+					log.Printf("REMB sent: estimate=%.0f bps, ssrcs=%v", remb.Bitrate, remb.SSRCs)
 					l.lastEstimate = uint64(remb.Bitrate)
 				}
 				l.mu.Unlock()
@@ -262,8 +262,7 @@ Chrome Interop Test Server
 3. Click "Start Call"
 4. Check webrtc-internals for "remb" in inbound-rtp stats
 
-Server ready on :8080
-`)
+Server ready on :8080`)
 
 	// Serve HTML page
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
