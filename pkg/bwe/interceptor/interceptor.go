@@ -189,15 +189,14 @@ func (i *BWEInterceptor) processRTP(raw []byte, ssrc uint32) {
 
 	// Fallback to abs-capture-time (8 bytes, convert to abs-send-time scale)
 	if sendTime == 0 && captureID != 0 {
-		if ext := header.GetExtension(captureID); len(ext) >= 8 {
-			captureTime, err := bwe.ParseAbsCaptureTime(ext)
-			if err == nil {
+		if extData := header.GetExtension(captureID); len(extData) >= 8 {
+			var ext rtp.AbsCaptureTimeExtension // Stack allocated - CRITICAL for 0 allocs/op
+			if err := ext.Unmarshal(extData); err == nil {
 				// Convert 64-bit UQ32.32 to 24-bit 6.18 fixed point
 				// AbsCaptureTime: upper 32 bits = seconds, lower 32 bits = fraction
 				// We need seconds (6 bits) + fraction (18 bits) = 24 bits total
-				// Extract: (seconds mod 64) << 18 | (fraction >> 14)
-				seconds := (captureTime >> 32) & 0x3F    // 6 bits of seconds (mod 64)
-				fraction := (captureTime >> 14) & 0x3FFFF // 18 bits of fraction
+				seconds := (ext.Timestamp >> 32) & 0x3F    // 6 bits of seconds (mod 64)
+				fraction := (ext.Timestamp >> 14) & 0x3FFFF // 18 bits of fraction
 				sendTime = uint32((seconds << 18) | fraction)
 			}
 		}
