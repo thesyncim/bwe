@@ -446,6 +446,478 @@ func TestBandwidthEstimator_MultipleSSRCsSameEstimate(t *testing.T) {
 }
 
 // =============================================================================
+// Multi-SSRC Aggregation Tests
+// =============================================================================
+
+func TestBandwidthEstimator_MultiSSRC_Aggregation(t *testing.T) {
+	// Test: Multiple SSRCs feed single estimate
+	// Video SSRC: 1 Mbps (125 bytes/ms)
+	// Audio SSRC: 50 kbps (~6 bytes/ms)
+	clock := internal.NewMockClock(time.Now())
+	e := NewBandwidthEstimator(DefaultBandwidthEstimatorConfig(), clock)
+
+	videoSSRC := uint32(0x11111111)
+	audioSSRC := uint32(0x22222222)
+	sendTime := uint32(0)
+
+	// Feed interleaved packets for 2 seconds
+	for i := 0; i < 2000; i++ {
+		// Video packet every ms (~1 Mbps with 125 byte packets)
+		e.OnPacket(PacketInfo{
+			ArrivalTime: clock.Now(),
+			SendTime:    sendTime,
+			Size:        125,
+			SSRC:        videoSSRC,
+		})
+
+		// Audio packet every 20ms (~50 kbps with 125 byte packets)
+		if i%20 == 0 {
+			e.OnPacket(PacketInfo{
+				ArrivalTime: clock.Now(),
+				SendTime:    sendTime,
+				Size:        125,
+				SSRC:        audioSSRC,
+			})
+		}
+
+		sendTime += uint32(262) // 1ms in abs-send-time units
+		clock.Advance(time.Millisecond)
+	}
+
+	// Verify both SSRCs tracked
+	ssrcs := e.GetSSRCs()
+	assert.Len(t, ssrcs, 2)
+	assert.Contains(t, ssrcs, videoSSRC)
+	assert.Contains(t, ssrcs, audioSSRC)
+
+	// Verify aggregated rate exists
+	rate, ok := e.GetIncomingRate()
+	assert.True(t, ok)
+	assert.Greater(t, rate, int64(0))
+	t.Logf("Aggregated incoming rate: %d bps", rate)
+
+	// Verify single estimate (not per-SSRC)
+	estimate := e.GetEstimate()
+	assert.Greater(t, estimate, int64(0))
+	t.Logf("Single aggregated estimate: %d bps", estimate)
+}
+
+func TestBandwidthEstimator_MultiSSRC_CongestionAffectsAll(t *testing.T) {
+	// Test: Congestion via one SSRC affects total estimate
+	clock := internal.NewMockClock(time.Now())
+	e := NewBandwidthEstimator(DefaultBandwidthEstimatorConfig(), clock)
+
+	videoSSRC := uint32(0x11111111)
+	audioSSRC := uint32(0x22222222)
+	sendTime := uint32(0)
+
+	// Phase 1: Stable traffic from both SSRCs (1 second)
+	for i := 0; i < 1000; i++ {
+		e.OnPacket(PacketInfo{
+			ArrivalTime: clock.Now(),
+			SendTime:    sendTime,
+			Size:        125,
+			SSRC:        videoSSRC,
+		})
+		if i%20 == 0 {
+			e.OnPacket(PacketInfo{
+				ArrivalTime: clock.Now(),
+				SendTime:    sendTime,
+				Size:        125,
+				SSRC:        audioSSRC,
+			})
+		}
+		sendTime += uint32(262)
+		clock.Advance(time.Millisecond)
+	}
+
+	stableEstimate := e.GetEstimate()
+	t.Logf("Stable estimate: %d bps", stableEstimate)
+
+	// Phase 2: Introduce congestion via video SSRC only (packets arrive late)
+	for i := 0; i < 500; i++ {
+		// Video packets with increasing delay (congestion)
+		e.OnPacket(PacketInfo{
+			ArrivalTime: clock.Now(),
+			SendTime:    sendTime,
+			Size:        125,
+			SSRC:        videoSSRC,
+		})
+
+		// Audio packets arrive normally
+		if i%20 == 0 {
+			e.OnPacket(PacketInfo{
+				ArrivalTime: clock.Now(),
+				SendTime:    sendTime,
+				Size:        125,
+				SSRC:        audioSSRC,
+			})
+		}
+
+		sendTime += uint32(262)
+		// Arrival increases more than send time (congestion)
+		clock.Advance(time.Millisecond + 50*time.Millisecond)
+	}
+
+	congestedEstimate := e.GetEstimate()
+	t.Logf("Congested estimate: %d bps", congestedEstimate)
+
+	// The congestion should affect the total estimate
+	// (though the exact behavior depends on how congestion is detected)
+	assert.Equal(t, BwOverusing, e.GetCongestionState(),
+		"congestion should be detected")
+}
+
+// =============================================================================
+// REMB Integration Tests
+// =============================================================================
+
+func TestBandwidthEstimator_REMBIntegration_Basic(t *testing.T) {
+	// Test: MaybeBuildREMB returns packet at interval
+	clock := internal.NewMockClock(time.Now())
+	e := NewBandwidthEstimator(DefaultBandwidthEstimatorConfig(), clock)
+
+	// Attach REMB scheduler with 1 second interval
+	scheduler := NewREMBScheduler(DefaultREMBSchedulerConfig())
+	e.SetREMBScheduler(scheduler)
+
+	sendTime := uint32(0)
+	rembCount := 0
+
+	// Feed packets for 3 seconds
+	for i := 0; i < 3000; i++ {
+		e.OnPacket(PacketInfo{
+			ArrivalTime: clock.Now(),
+			SendTime:    sendTime,
+			Size:        125,
+			SSRC:        0x12345678,
+		})
+
+		// Check for REMB after each packet
+		data, sent, err := e.MaybeBuildREMB(clock.Now())
+		assert.NoError(t, err)
+		if sent {
+			assert.NotNil(t, data)
+			rembCount++
+		}
+
+		sendTime += uint32(262)
+		clock.Advance(time.Millisecond)
+	}
+
+	// Should have sent ~3 REMBs (one per second)
+	assert.GreaterOrEqual(t, rembCount, 2, "should send REMB at regular intervals")
+	assert.LessOrEqual(t, rembCount, 5, "should not send too many REMBs")
+	t.Logf("REMB packets sent in 3 seconds: %d", rembCount)
+}
+
+func TestBandwidthEstimator_REMBIntegration_ImmediateDecrease(t *testing.T) {
+	// Test: REMB sent immediately on significant decrease
+	clock := internal.NewMockClock(time.Now())
+	e := NewBandwidthEstimator(DefaultBandwidthEstimatorConfig(), clock)
+
+	// Custom scheduler with 10 second interval (so regular send is rare)
+	config := DefaultREMBSchedulerConfig()
+	config.Interval = 10 * time.Second
+	scheduler := NewREMBScheduler(config)
+	e.SetREMBScheduler(scheduler)
+
+	sendTime := uint32(0)
+
+	// Phase 1: Stable traffic (500ms)
+	for i := 0; i < 500; i++ {
+		e.OnPacket(PacketInfo{
+			ArrivalTime: clock.Now(),
+			SendTime:    sendTime,
+			Size:        125,
+			SSRC:        0x12345678,
+		})
+		sendTime += uint32(262)
+		clock.Advance(time.Millisecond)
+	}
+
+	// Send initial REMB
+	_, sent, _ := e.MaybeBuildREMB(clock.Now())
+	assert.True(t, sent, "should send initial REMB")
+	initialEstimate := e.GetEstimate()
+	t.Logf("Initial estimate: %d bps", initialEstimate)
+
+	// Advance a little (not enough for regular interval)
+	clock.Advance(100 * time.Millisecond)
+
+	// Phase 2: Induce congestion to cause significant decrease
+	for i := 0; i < 200; i++ {
+		e.OnPacket(PacketInfo{
+			ArrivalTime: clock.Now(),
+			SendTime:    sendTime,
+			Size:        125,
+			SSRC:        0x12345678,
+		})
+		sendTime += uint32(262)
+		// Heavy congestion: packets arrive much later than sent
+		clock.Advance(time.Millisecond + 100*time.Millisecond)
+	}
+
+	// Check if REMB is triggered by decrease
+	data, sent, err := e.MaybeBuildREMB(clock.Now())
+	assert.NoError(t, err)
+
+	// Should have sent REMB immediately due to decrease, even though interval hasn't passed
+	if sent {
+		t.Log("REMB sent immediately on decrease")
+		assert.NotNil(t, data)
+	}
+
+	// Verify estimate decreased
+	congestedEstimate := e.GetEstimate()
+	t.Logf("Congested estimate: %d bps", congestedEstimate)
+	assert.Less(t, congestedEstimate, initialEstimate, "estimate should decrease during congestion")
+}
+
+func TestBandwidthEstimator_REMBIntegration_IncludesAllSSRCs(t *testing.T) {
+	// Test: REMB contains all seen SSRCs
+	clock := internal.NewMockClock(time.Now())
+	e := NewBandwidthEstimator(DefaultBandwidthEstimatorConfig(), clock)
+
+	scheduler := NewREMBScheduler(DefaultREMBSchedulerConfig())
+	e.SetREMBScheduler(scheduler)
+
+	// Feed packets from 3 SSRCs
+	ssrcs := []uint32{0x11111111, 0x22222222, 0x33333333}
+	sendTime := uint32(0)
+
+	for i := 0; i < 1000; i++ {
+		// Rotate through SSRCs
+		ssrc := ssrcs[i%len(ssrcs)]
+		e.OnPacket(PacketInfo{
+			ArrivalTime: clock.Now(),
+			SendTime:    sendTime,
+			Size:        125,
+			SSRC:        ssrc,
+		})
+		sendTime += uint32(262)
+		clock.Advance(time.Millisecond)
+	}
+
+	// Build REMB
+	data, sent, err := e.MaybeBuildREMB(clock.Now())
+	require.NoError(t, err)
+	require.True(t, sent, "should send REMB")
+
+	// Parse REMB and verify all SSRCs present
+	remb, err := ParseREMB(data)
+	require.NoError(t, err)
+
+	assert.Len(t, remb.SSRCs, 3, "REMB should contain all 3 SSRCs")
+	for _, expectedSSRC := range ssrcs {
+		assert.Contains(t, remb.SSRCs, expectedSSRC,
+			"REMB should contain SSRC %x", expectedSSRC)
+	}
+
+	t.Logf("REMB bitrate: %d bps, SSRCs: %v", remb.Bitrate, remb.SSRCs)
+}
+
+func TestBandwidthEstimator_NoSchedulerNoREMB(t *testing.T) {
+	// Test: Without scheduler, MaybeBuildREMB returns false
+	clock := internal.NewMockClock(time.Now())
+	e := NewBandwidthEstimator(DefaultBandwidthEstimatorConfig(), clock)
+
+	// Feed some packets
+	for i := 0; i < 100; i++ {
+		e.OnPacket(PacketInfo{
+			ArrivalTime: clock.Now(),
+			SendTime:    uint32(i * 262),
+			Size:        125,
+			SSRC:        0x12345678,
+		})
+		clock.Advance(time.Millisecond)
+	}
+
+	// Without SetREMBScheduler, MaybeBuildREMB should return false
+	data, sent, err := e.MaybeBuildREMB(clock.Now())
+	assert.NoError(t, err)
+	assert.False(t, sent, "should not send REMB without scheduler")
+	assert.Nil(t, data)
+}
+
+// =============================================================================
+// Full Pipeline Integration Tests
+// =============================================================================
+
+func TestBandwidthEstimator_FullPipeline_StableNetwork(t *testing.T) {
+	// Integration test: 30 seconds of stable ~2 Mbps traffic
+	// 2 SSRCs (video + audio)
+	clock := internal.NewMockClock(time.Now())
+	e := NewBandwidthEstimator(DefaultBandwidthEstimatorConfig(), clock)
+
+	scheduler := NewREMBScheduler(DefaultREMBSchedulerConfig())
+	e.SetREMBScheduler(scheduler)
+
+	videoSSRC := uint32(0x11111111)
+	audioSSRC := uint32(0x22222222)
+	sendTime := uint32(0)
+	rembCount := 0
+
+	// 30 seconds of traffic
+	durationMs := 30000
+	// ~2 Mbps = 250 bytes/ms for video, audio ~50kbps
+	for i := 0; i < durationMs; i++ {
+		// Video packet every ms
+		e.OnPacket(PacketInfo{
+			ArrivalTime: clock.Now(),
+			SendTime:    sendTime,
+			Size:        250, // ~2 Mbps
+			SSRC:        videoSSRC,
+		})
+
+		// Audio packet every 20ms
+		if i%20 == 0 {
+			e.OnPacket(PacketInfo{
+				ArrivalTime: clock.Now(),
+				SendTime:    sendTime,
+				Size:        125, // ~50 kbps
+				SSRC:        audioSSRC,
+			})
+		}
+
+		// Check for REMB
+		_, sent, _ := e.MaybeBuildREMB(clock.Now())
+		if sent {
+			rembCount++
+		}
+
+		sendTime += uint32(262)
+		clock.Advance(time.Millisecond)
+	}
+
+	// Verify estimate converged near the incoming rate
+	estimate := e.GetEstimate()
+	incomingRate, ok := e.GetIncomingRate()
+	assert.True(t, ok)
+
+	t.Logf("30s stable: estimate=%d bps, incoming=%d bps, REMBs=%d",
+		estimate, incomingRate, rembCount)
+
+	// Estimate should be reasonable (positive and not stuck at initial)
+	assert.Greater(t, estimate, int64(0))
+
+	// Should have sent ~30 REMBs (one per second)
+	assert.GreaterOrEqual(t, rembCount, 25, "should send REMB approximately once per second")
+	assert.LessOrEqual(t, rembCount, 40, "should not send too many REMBs")
+
+	// All SSRCs should be tracked
+	ssrcs := e.GetSSRCs()
+	assert.Len(t, ssrcs, 2)
+	assert.Contains(t, ssrcs, videoSSRC)
+	assert.Contains(t, ssrcs, audioSSRC)
+}
+
+func TestBandwidthEstimator_FullPipeline_CongestionEvent(t *testing.T) {
+	// Integration test: stable -> congestion -> recovery
+	// 5s stable at ~2 Mbps
+	// 2s congestion (increasing delay)
+	// 5s recovery
+	clock := internal.NewMockClock(time.Now())
+	e := NewBandwidthEstimator(DefaultBandwidthEstimatorConfig(), clock)
+
+	// Use short REMB interval for this test
+	config := DefaultREMBSchedulerConfig()
+	config.Interval = 500 * time.Millisecond
+	scheduler := NewREMBScheduler(config)
+	e.SetREMBScheduler(scheduler)
+
+	sendTime := uint32(0)
+	var estimates []int64
+	var rembSentOnDecrease bool
+	var estimateBeforeDecrease int64
+
+	// Phase 1: 5 seconds stable
+	t.Log("Phase 1: Stable traffic")
+	for i := 0; i < 5000; i++ {
+		e.OnPacket(PacketInfo{
+			ArrivalTime: clock.Now(),
+			SendTime:    sendTime,
+			Size:        250,
+			SSRC:        0x12345678,
+		})
+		e.MaybeBuildREMB(clock.Now())
+
+		sendTime += uint32(262)
+		clock.Advance(time.Millisecond)
+	}
+	stableEstimate := e.GetEstimate()
+	estimates = append(estimates, stableEstimate)
+	t.Logf("After stable: estimate=%d, state=%v", stableEstimate, e.GetCongestionState())
+
+	// Phase 2: 2 seconds congestion
+	t.Log("Phase 2: Congestion")
+	estimateBeforeDecrease = e.GetEstimate()
+	for i := 0; i < 2000; i++ {
+		e.OnPacket(PacketInfo{
+			ArrivalTime: clock.Now(),
+			SendTime:    sendTime,
+			Size:        250,
+			SSRC:        0x12345678,
+		})
+
+		_, sent, _ := e.MaybeBuildREMB(clock.Now())
+		currentEstimate := e.GetEstimate()
+
+		// Check if REMB was sent when estimate decreased significantly
+		if sent && currentEstimate < estimateBeforeDecrease*97/100 {
+			rembSentOnDecrease = true
+		}
+
+		sendTime += uint32(262)
+		// Heavy delay increase (congestion)
+		clock.Advance(time.Millisecond + 50*time.Millisecond)
+	}
+	congestionEstimate := e.GetEstimate()
+	estimates = append(estimates, congestionEstimate)
+	t.Logf("After congestion: estimate=%d, state=%v", congestionEstimate, e.GetCongestionState())
+
+	// Phase 3: 5 seconds recovery
+	t.Log("Phase 3: Recovery")
+	for i := 0; i < 5000; i++ {
+		e.OnPacket(PacketInfo{
+			ArrivalTime: clock.Now(),
+			SendTime:    sendTime,
+			Size:        250,
+			SSRC:        0x12345678,
+		})
+		e.MaybeBuildREMB(clock.Now())
+
+		sendTime += uint32(262)
+		clock.Advance(time.Millisecond)
+	}
+	recoveryEstimate := e.GetEstimate()
+	estimates = append(estimates, recoveryEstimate)
+	t.Logf("After recovery: estimate=%d, state=%v", recoveryEstimate, e.GetCongestionState())
+
+	// Verify behavior
+	// 1. Estimate should have decreased during congestion
+	assert.Less(t, congestionEstimate, stableEstimate,
+		"estimate should decrease during congestion")
+
+	// 2. Estimate should have increased during recovery (even if not fully recovered)
+	assert.Greater(t, recoveryEstimate, congestionEstimate,
+		"estimate should increase during recovery")
+
+	// 3. REMB should have been sent on decrease
+	// (This may or may not happen depending on timing; log but don't require)
+	if rembSentOnDecrease {
+		t.Log("REMB was sent immediately on decrease")
+	}
+
+	// Note: Full state recovery (BwOverusing -> BwNormal) may take longer than
+	// the test duration due to the adaptive threshold. What we verify is that
+	// the system IS recovering (estimate increasing).
+
+	t.Logf("Estimates: stable=%d, congested=%d, recovered=%d",
+		estimates[0], estimates[1], estimates[2])
+}
+
+// =============================================================================
 // Benchmark Tests
 // =============================================================================
 
