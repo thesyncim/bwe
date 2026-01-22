@@ -193,7 +193,7 @@ func (i *BWEInterceptor) processRTP(raw []byte, ssrc uint32) {
 				// AbsCaptureTime: upper 32 bits = seconds, lower 32 bits = fraction
 				// We need seconds (6 bits) + fraction (18 bits) = 24 bits total
 				// Extract: (seconds mod 64) << 18 | (fraction >> 14)
-				seconds := (captureTime >> 32) & 0x3F   // 6 bits of seconds (mod 64)
+				seconds := (captureTime >> 32) & 0x3F    // 6 bits of seconds (mod 64)
 				fraction := (captureTime >> 14) & 0x3FFFF // 18 bits of fraction
 				sendTime = uint32((seconds << 18) | fraction)
 			}
@@ -205,14 +205,18 @@ func (i *BWEInterceptor) processRTP(raw []byte, ssrc uint32) {
 		return
 	}
 
-	// Feed to estimator
-	pkt := bwe.PacketInfo{
-		ArrivalTime: now,
-		SendTime:    sendTime,
-		Size:        len(raw),
-		SSRC:        ssrc,
-	}
-	i.estimator.OnPacket(pkt)
+	// Get PacketInfo from pool
+	pkt := getPacketInfo()
+	pkt.ArrivalTime = now
+	pkt.SendTime = sendTime
+	pkt.Size = len(raw)
+	pkt.SSRC = ssrc
+
+	// Feed to estimator (OnPacket takes by value, so dereference)
+	i.estimator.OnPacket(*pkt)
+
+	// Return to pool
+	putPacketInfo(pkt)
 }
 
 // rembLoop runs periodically to send REMB packets.
