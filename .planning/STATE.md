@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 5 - Pion Type Adoption
-Plan: —
-Status: Awaiting plan creation
-Last activity: 2026-01-22 - Roadmap created for v1.1
+Plan: 01 of 3 completed
+Status: In progress
+Last activity: 2026-01-22 - Completed 05-01-PLAN.md (Pion extension parsing)
 
-Progress: [████████████████████████░] 80% (v1.0 complete, v1.1 planning)
+Progress: [████████████████████████▒] 81% (v1.0 complete, v1.1 plan 1/3)
 
 ## Performance Metrics
 
@@ -115,6 +115,9 @@ Recent decisions affecting current work:
 - **[04-05]** Timestamp wraparound tests verify 1350+ wraparounds without failure
 - **[04-05]** Real-time soak runner uses ticker for actual timing (pprof-enabled)
 - **[04-05]** 5-minute status intervals in soak runner balance visibility with noise
+- **[05-01]** Stack allocation via var ext Type (not new()) for 0 allocs/op
+- **[05-01]** Cast uint64 to uint32 for abs-send-time (24-bit fits safely)
+- **[05-01]** Retain UQ32.32 to 6.18 conversion logic (KEEP-03)
 
 ### Pending Todos
 
@@ -127,7 +130,7 @@ None - v1.0 complete, v1.1 roadmap ready for planning.
 ## Session Continuity
 
 Last session: 2026-01-22
-Stopped at: Created v1.1 roadmap (Phase 5: Pion Type Adoption)
+Stopped at: Completed 05-01-PLAN.md (Pion extension parsing in interceptor)
 Resume file: None
 
 ---
@@ -162,14 +165,14 @@ Resume file: None
 - 24-hour soak test [COMPLETED in 04-05]
 
 **v1.1 CURRENT (Phase 5):**
-- Use pion/rtp.AbsSendTimeExtension (EXT-01)
-- Use pion/rtp.AbsCaptureTimeExtension (EXT-02)
+- Use pion/rtp.AbsSendTimeExtension (EXT-01) [COMPLETED in 05-01]
+- Use pion/rtp.AbsCaptureTimeExtension (EXT-02) [COMPLETED in 05-01]
 - Remove custom ParseAbsSendTime() (EXT-03)
 - Remove custom ParseAbsCaptureTime() (EXT-04)
 - Retain UnwrapAbsSendTime() (KEEP-01)
 - Retain FindExtensionID() helpers (KEEP-02)
-- Retain custom inter-group delay calculation (KEEP-03)
-- All existing tests pass (VAL-01)
+- Retain custom inter-group delay calculation (KEEP-03) [VERIFIED in 05-01]
+- All existing tests pass (VAL-01) [VERIFIED in 05-01]
 - No allocation regression (VAL-02)
 - 24-hour soak test passes (VAL-03)
 - Chrome interop still works (VAL-04)
@@ -292,10 +295,16 @@ All validation requirements verified:
 | VALID-03 | PASS | 04-03 | TCP fairness (no starvation) |
 | VALID-04 | PASS | 04-05 | 24-hour soak (no leaks/panics) |
 
-## v1.1 MILESTONE STARTED
+## v1.1 MILESTONE IN PROGRESS
 
-Phase 5 roadmap created. Ready for planning via `/gsd:plan-phase 5`.
+**Phase 5 Progress:**
+
+| Plan | Name | Status | Duration |
+|------|------|--------|----------|
+| 05-01 | Pion extension parsing | COMPLETE | 2 min |
+| 05-02 | Remove custom parsing | Pending | - |
+| 05-03 | Validation | Pending | - |
 
 ---
 
-*Last updated: 2026-01-22 - v1.1 roadmap created*
+*Last updated: 2026-01-22 - Completed 05-01-PLAN.md*
