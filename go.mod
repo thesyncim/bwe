@@ -3,6 +3,7 @@ module bwe
 go 1.25
 
 require (
+	github.com/go-rod/rod v0.116.2
 	github.com/pion/interceptor v0.1.43
 	github.com/pion/rtcp v1.2.16
 	github.com/pion/rtp v1.10.0
@@ -27,6 +28,11 @@ require (
 	github.com/pion/turn/v4 v4.1.4 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
+	github.com/ysmood/fetchup v0.2.3 // indirect
+	github.com/ysmood/goob v0.4.0 // indirect
+	github.com/ysmood/got v0.40.0 // indirect
+	github.com/ysmood/gson v0.7.3 // indirect
+	github.com/ysmood/leakless v0.9.0 // indirect
 	golang.org/x/crypto v0.33.0 // indirect
 	golang.org/x/net v0.35.0 // indirect
 	golang.org/x/sys v0.30.0 // indirect
