@@ -1,70 +1,83 @@
-# Requirements: GCC Receiver-Side BWE v1.1
+# Requirements: GCC Receiver-Side BWE v1.2
 
 **Defined:** 2026-01-22
-**Core Value:** Adopt Pion's native types to reduce maintenance and prepare for upstream contribution
+**Core Value:** Automated E2E testing to validate BWE behavior under realistic conditions
 
-## v1.1 Requirements
+## v1.2 Requirements
 
-Requirements for this refactoring milestone.
+Requirements for E2E testing milestone.
 
-### Extension Parsing
+### Browser Automation
 
-- [x] **EXT-01**: Use `pion/rtp.AbsSendTimeExtension` for parsing abs-send-time from RTP packets
-- [x] **EXT-02**: Use `pion/rtp.AbsCaptureTimeExtension` for parsing abs-capture-time from RTP packets
-- [x] **EXT-03**: Remove custom `ParseAbsSendTime()` function (replaced by Pion)
-- [x] **EXT-04**: Remove custom `ParseAbsCaptureTime()` function (replaced by Pion)
+- [ ] **BROWSER-01**: Automated Chrome REMB verification replaces manual interop test
+- [ ] **BROWSER-02**: Tests run in headless mode without display server
+- [ ] **BROWSER-03**: Programmatic WebRTC stats extraction via getStats() API
 
-### Preserve Critical Logic
+### Network Simulation
 
-- [x] **KEEP-01**: Retain `UnwrapAbsSendTime()` for 64-second timestamp wraparound handling
-- [x] **KEEP-02**: Retain `FindExtensionID()` helpers for SDP-based extension ID discovery
-- [x] **KEEP-03**: Retain custom inter-group delay calculation (Pion has no equivalent)
+- [ ] **NET-01**: Latency injection with constant and variable delay patterns
+- [ ] **NET-02**: Bandwidth throttling to test rate adaptation behavior
+- [ ] **NET-03**: Packet jitter simulation with variable inter-packet delay
+- [ ] **NET-04**: Packet loss patterns including random and burst loss
 
-### Validation
+### Integration Testing
 
-- [x] **VAL-01**: All existing tests pass after refactor
-- [x] **VAL-02**: Benchmark shows no allocation regression in hot path (0 allocs/op for core)
-- [x] **VAL-03**: 24-hour soak test passes (timestamp wraparound validation)
-- [x] **VAL-04**: Chrome interop still works (REMB accepted) — requires manual verification
+- [ ] **INT-01**: Full Pion PeerConnection E2E tests (Pion-to-Pion flow)
+- [ ] **INT-02**: Multi-stream scenarios (audio + video, multiple tracks)
+- [ ] **INT-03**: Stream timeout and recovery tests
+- [ ] **INT-04**: Mid-call renegotiation scenarios (track add/remove)
+
+### CI Integration
+
+- [ ] **CI-01**: GitHub Actions workflow for automated test runs on push/PR
+- [ ] **CI-02**: Docker-based Chrome for reproducible browser environment
+- [ ] **CI-03**: Parallel test execution for faster feedback
+- [ ] **CI-04**: Performance regression detection tracking benchmark changes
 
 ## Future Requirements
 
 Deferred to future milestones.
 
-### Documentation
+### Advanced Testing
 
-- **DOC-01**: Document Pion type usage patterns for upstream contribution
+- **ADV-01**: Multi-browser testing (Firefox, Safari)
+- **ADV-02**: Reference trace extraction from browser internals
+- **ADV-03**: Full RFC 8867 test scenario compliance
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| Architecture changes | Current boundary is correct per research |
-| REMB marshalling changes | Already uses Pion types |
-| Wraparound logic changes | Custom implementation validated, Pion lacks this |
-| New features | This is a refactoring milestone only |
+| Mobile browser testing | Adds complexity, desktop Chrome sufficient for v1.2 |
+| Visual quality metrics (VMAF/PSNR) | Not relevant for bandwidth estimation testing |
+| Real tc/netem in CI | Requires elevated privileges, use Toxiproxy/vnet instead |
+| Exhaustive parameter sweeps | Focus on representative scenarios, not combinatorial explosion |
 
 ## Traceability
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| EXT-01 | Phase 5 | Complete |
-| EXT-02 | Phase 5 | Complete |
-| EXT-03 | Phase 5 | Complete |
-| EXT-04 | Phase 5 | Complete |
-| KEEP-01 | Phase 5 | Complete |
-| KEEP-02 | Phase 5 | Complete |
-| KEEP-03 | Phase 5 | Complete |
-| VAL-01 | Phase 5 | Complete |
-| VAL-02 | Phase 5 | Complete |
-| VAL-03 | Phase 5 | Complete |
-| VAL-04 | Phase 5 | Complete |
+| BROWSER-01 | TBD | Pending |
+| BROWSER-02 | TBD | Pending |
+| BROWSER-03 | TBD | Pending |
+| NET-01 | TBD | Pending |
+| NET-02 | TBD | Pending |
+| NET-03 | TBD | Pending |
+| NET-04 | TBD | Pending |
+| INT-01 | TBD | Pending |
+| INT-02 | TBD | Pending |
+| INT-03 | TBD | Pending |
+| INT-04 | TBD | Pending |
+| CI-01 | TBD | Pending |
+| CI-02 | TBD | Pending |
+| CI-03 | TBD | Pending |
+| CI-04 | TBD | Pending |
 
 **Coverage:**
-- v1.1 requirements: 11 total
-- Mapped to phases: 11
-- Completed: 11 ✓
+- v1.2 requirements: 15 total
+- Mapped to phases: 0
+- Unmapped: 15
 
 ---
 *Requirements defined: 2026-01-22*
-*Last updated: 2026-01-22 after Phase 5 execution complete*
+*Last updated: 2026-01-22 after initial definition*
