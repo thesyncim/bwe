@@ -13,6 +13,15 @@ var ErrInvalidAbsSendTime = errors.New("bwe: invalid abs-send-time data, need at
 //
 // The abs-send-time extension uses 24 bits in 6.18 fixed-point format,
 // representing NTP time modulo 64 seconds.
+//
+// Deprecated: Use rtp.AbsSendTimeExtension.Unmarshal() from github.com/pion/rtp instead.
+// This function will be removed in v1.2. The Pion implementation is maintained upstream
+// and handles validation. Example migration:
+//
+//	var ext rtp.AbsSendTimeExtension
+//	if err := ext.Unmarshal(data); err == nil {
+//	    sendTime = uint32(ext.Timestamp)
+//	}
 func ParseAbsSendTime(data []byte) (uint32, error) {
 	if len(data) < 3 {
 		return 0, ErrInvalidAbsSendTime
