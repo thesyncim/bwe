@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-01-22)
 
 **Core value:** Generate accurate REMB feedback that matches libwebrtc/Chrome receiver behavior
-**Current focus:** Phase 2 COMPLETE - Ready for Phase 3 Pion Integration
+**Current focus:** Phase 3 Pion Integration - Building interceptor adapter
 
 ## Current Position
 
-Phase: 2 of 4 (Rate Control & REMB) - COMPLETE
-Plan: 6 of 6 in current phase
-Status: Phase complete
-Last activity: 2026-01-22 - Completed 02-06-PLAN.md (End-to-end integration)
+Phase: 3 of 4 (Pion Integration)
+Plan: 1 of 6 in current phase
+Status: In progress
+Last activity: 2026-01-22 - Completed 03-01-PLAN.md (Interceptor setup)
 
-Progress: [████████████░░░░░░░░░░░] 52% (12/23 plans)
+Progress: [█████████████░░░░░░░░░░] 57% (13/23 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 12
-- Average duration: 3.6 min
-- Total execution time: 43 min
+- Total plans completed: 13
+- Average duration: 3.5 min
+- Total execution time: 46 min
 
 **By Phase:**
 
@@ -29,12 +29,12 @@ Progress: [████████████░░░░░░░░░░░
 |-------|-------|-------|----------|
 | 1. Foundation | 6/6 | 23 min | 3.8 min |
 | 2. Rate Control | 6/6 | 20 min | 3.3 min |
-| 3. Pion Integration | 0/6 | - | - |
+| 3. Pion Integration | 1/6 | 3 min | 3.0 min |
 | 4. Validation | 0/5 | - | - |
 
 **Recent Trend:**
-- Last 6 plans: 02-01 (4 min), 02-02 (~2 min), 02-03 (5 min), 02-04 (2 min), 02-05 (3 min), 02-06 (7 min)
-- Trend: Phase 2 complete with 6/6 plans executed
+- Last 6 plans: 02-02 (~2 min), 02-03 (5 min), 02-04 (2 min), 02-05 (3 min), 02-06 (7 min), 03-01 (3 min)
+- Trend: Phase 3 started with setup plan complete
 
 *Updated after each plan completion*
 
@@ -68,9 +68,12 @@ Recent decisions affecting current work:
 - **[02-04]** 3% default threshold balances responsiveness with packet overhead
 - **[02-05]** BandwidthEstimator wires components without adding complexity
 - **[02-05]** SSRC tracking via map for O(1) deduplication
-- **[NEW 02-06]** REMB scheduler is optional via SetREMBScheduler
-- **[NEW 02-06]** MaybeBuildREMB includes all tracked SSRCs in REMB packet
-- **[NEW 02-06]** lastPacketTime tracking for REMB scheduling convenience
+- **[02-06]** REMB scheduler is optional via SetREMBScheduler
+- **[02-06]** MaybeBuildREMB includes all tracked SSRCs in REMB packet
+- **[02-06]** lastPacketTime tracking for REMB scheduling convenience
+- **[NEW 03-01]** Extension ID 0 means "not found" - callers must handle gracefully
+- **[NEW 03-01]** atomic.Value for lastPacketTime enables thread-safe concurrent access
+- **[NEW 03-01]** Unexported streamState type - internal implementation detail
 
 ### Pending Todos
 
@@ -78,19 +81,19 @@ None yet.
 
 ### Blockers/Concerns
 
-None - Phase 2 complete and ready for Phase 3.
+None - Phase 3 in progress.
 
 ## Session Continuity
 
-Last session: 2026-01-22T16:30:51Z
-Stopped at: Completed 02-06-PLAN.md (Phase 2 complete)
+Last session: 2026-01-22T17:58:00Z
+Stopped at: Completed 03-01-PLAN.md (Interceptor setup)
 Resume file: None
 
 ---
 
 ## Quick Reference
 
-**Next action:** `/gsd:execute-plan 03-01` (Start Phase 3: Pion Integration)
+**Next action:** `/gsd:execute-plan 03-02` (Core interceptor implementation)
 
 **Phase 1 COMPLETE:**
 - Delay measurement with timestamp parsing [COMPLETED in 01-01]
@@ -107,6 +110,14 @@ Resume file: None
 - REMB scheduling [COMPLETED in 02-04]
 - BandwidthEstimator API [COMPLETED in 02-05]
 - End-to-end integration [COMPLETED in 02-06]
+
+**Phase 3 IN PROGRESS:**
+- Interceptor setup with extension helpers [COMPLETED in 03-01]
+- Core interceptor implementation [NEXT: 03-02]
+- Factory and options [03-03]
+- RTP processing [03-04]
+- REMB sending [03-05]
+- Integration tests [03-06]
 
 **Phase 1 API Surface:**
 - `DelayEstimator` - Main entry point
@@ -130,6 +141,13 @@ Resume file: None
 - `SetREMBScheduler(*REMBScheduler)` - Attach REMB scheduler
 - `MaybeBuildREMB(time.Time) ([]byte, bool, error)` - Build REMB if needed
 - `GetLastPacketTime() time.Time` - Get arrival time of last packet
+
+**Phase 3 API Surface (IN PROGRESS):**
+- `pkg/bwe/interceptor` package for Pion integration
+- `AbsSendTimeURI`, `AbsCaptureTimeURI` - Extension URI constants
+- `FindExtensionID(exts, uri)` - Extension ID lookup
+- `FindAbsSendTimeID(exts)`, `FindAbsCaptureTimeID(exts)` - Convenience functions
+- `streamState` (unexported) - Per-stream state tracking
 
 **Critical pitfalls handled in Phase 1:**
 - Adaptive threshold required (static causes TCP starvation) [HANDLED]
