@@ -124,6 +124,12 @@ func (i *BWEInterceptor) BindRTCPWriter(writer interceptor.RTCPWriter) intercept
 // BindRemoteStream is called by Pion when a new remote stream is detected.
 // It extracts RTP header extension IDs and wraps the reader to observe packets.
 func (i *BWEInterceptor) BindRemoteStream(info *interceptor.StreamInfo, reader interceptor.RTPReader) interceptor.RTPReader {
+	// Start cleanup loop on first stream (only once)
+	i.startOnce.Do(func() {
+		i.wg.Add(1)
+		go i.cleanupLoop()
+	})
+
 	// Extract extension IDs (first stream to provide them wins)
 	if absID := FindAbsSendTimeID(info.RTPHeaderExtensions); absID != 0 {
 		i.absExtID.CompareAndSwap(0, uint32(absID))
