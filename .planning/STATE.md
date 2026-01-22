@@ -10,31 +10,31 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 1 of 4 (Foundation & Core Pipeline)
-Plan: 3 of 6 in current phase
+Plan: 4 of 6 in current phase
 Status: In progress
-Last activity: 2026-01-22 — Completed 01-03-PLAN.md
+Last activity: 2026-01-22 — Completed 01-04-PLAN.md
 
-Progress: [███░░░░░░░░░░░░░░░░░░░░] 13% (3/23 plans)
+Progress: [████░░░░░░░░░░░░░░░░░░░] 17% (4/23 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 3
-- Average duration: 2.3 min
-- Total execution time: 7 min
+- Total plans completed: 4
+- Average duration: 2.5 min
+- Total execution time: 10 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 1. Foundation | 3/6 | 7 min | 2.3 min |
+| 1. Foundation | 4/6 | 10 min | 2.5 min |
 | 2. Rate Control | 0/6 | - | - |
 | 3. Pion Integration | 0/6 | - | - |
 | 4. Validation | 0/5 | - | - |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 (2 min), 01-02 (3 min), 01-03 (2 min)
-- Trend: Stable ~2.3 min/plan
+- Last 5 plans: 01-01 (2 min), 01-02 (3 min), 01-03 (2 min), 01-04 (3 min)
+- Trend: Stable ~2.5 min/plan
 
 *Updated after each plan completion*
 
@@ -52,6 +52,8 @@ Recent decisions affecting current work:
 - Positive delay variation = queue building, negative = queue draining
 - Outlier filtering uses capped innovation for variance but uncapped z for state update
 - Slow Kalman convergence (500+ iterations) is intentional to avoid noise overreaction
+- Trendline numDeltas cap at 60: Prevents runaway values during long sessions
+- Exponential smoothing before regression: Matches WebRTC reference behavior
 
 ### Pending Todos
 
@@ -63,24 +65,25 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-01-22T15:10:46Z
-Stopped at: Completed 01-03-PLAN.md
+Last session: 2026-01-22T15:13:00Z
+Stopped at: Completed 01-04-PLAN.md
 Resume file: None
 
 ---
 
 ## Quick Reference
 
-**Next action:** `/gsd:execute-phase 1` (continue with 01-04)
+**Next action:** `/gsd:execute-phase 1` (continue with 01-05)
 
 **Phase 1 goals:**
-- Delay measurement with timestamp parsing
+- Delay measurement with timestamp parsing [COMPLETED in 01-01]
 - Kalman filter for noise reduction [COMPLETED in 01-03]
+- Trendline estimator as alternative filter [COMPLETED in 01-04]
 - Overuse detector with adaptive threshold
 
 **Critical pitfalls (Phase 1):**
 - Adaptive threshold required (static causes TCP starvation)
-- Two timestamp wraparound scenarios (24-bit at 64s, 32-bit at 6-13h)
+- Two timestamp wraparound scenarios (24-bit at 64s, 32-bit at 6-13h) [HANDLED in 01-01]
 - Correct delay gradient formula
 - Burst grouping for bursty video traffic [COMPLETED in 01-02]
 - Monotonic time only (no wall clock)
