@@ -13,6 +13,12 @@ import (
 	"bwe/pkg/bwe"
 )
 
+const (
+	// streamTimeout is how long to keep tracking an inactive stream.
+	// Streams with no packets for this duration are removed.
+	streamTimeout = 2 * time.Second
+)
+
 // BWEInterceptor is a Pion interceptor that performs receiver-side bandwidth
 // estimation using the GCC algorithm. It observes incoming RTP packets,
 // extracts timing information from header extensions, and feeds them to
