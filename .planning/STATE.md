@@ -125,6 +125,9 @@ Recent decisions affecting current work:
 - **[05-02]** Custom parse functions fully removed (not deprecated) - new project has no backwards compatibility concerns
 - **[05-03]** VAL-04 (Chrome interop) requires manual verification with browser
 - **[05-03]** Build error in chrome-interop fixed as prerequisite for VAL-01
+- **[06-01]** Server binds to :0 by default for test portability (avoids port conflicts)
+- **[06-01]** Non-blocking Start() returns actual bound address
+- **[06-01]** Graceful shutdown via context.Context
 - **[06-02]** Rod v0.116.2 for browser automation (simpler API than chromedp)
 - **[06-02]** WebRTC Chrome flags: use-fake-device-for-media-stream, use-fake-ui-for-media-stream
 - **[06-02]** BrowserClient wraps Rod with Navigate, Eval, WaitStable, Close methods
@@ -162,9 +165,9 @@ None - v1.2 roadmap ready for Phase 6 planning.
 ## Session Continuity
 
 Last session: 2026-01-22
-Stopped at: Completed 06-02-PLAN.md (BrowserClient wrapper)
+Stopped at: Completed 06-01-PLAN.md (Server package refactor)
 Resume file: None
-Next action: `/gsd:execute-phase` 06-03-PLAN.md
+Next action: `/gsd:execute-phase` 06-03-PLAN.md (06-01, 06-02 both complete)
 
 ---
 
@@ -260,4 +263,4 @@ All validation requirements verified:
 
 ---
 
-*Last updated: 2026-01-22 - Phase 6 Plan 02 complete (BrowserClient wrapper)*
+*Last updated: 2026-01-22 - Phase 6 Plans 01 and 02 complete*
