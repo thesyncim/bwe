@@ -1,446 +1,402 @@
-# Stack Research: Pion Type Adoption
+# Stack Research: E2E Testing
 
 **Project:** GCC Receiver-Side BWE
-**Research Focus:** Pion types that can replace custom implementations
+**Research Focus:** Technology stack for automated E2E testing
 **Researched:** 2026-01-22
 **Overall Confidence:** HIGH
 
 ## Executive Summary
 
-Pion provides robust, maintained types for RTCP, RTP header extensions, and interceptor patterns. This research identifies specific Pion types that can replace custom implementations in the BWE codebase, reducing maintenance burden and improving interoperability.
+This research identifies the technology stack needed for automated E2E testing of the BWE library. The recommended stack prioritizes **pure Go solutions** for maintainability, **Rod over chromedp** for browser automation, and **Toxiproxy** for network simulation. GitHub Actions with Docker-based Chrome provides CI integration.
 
-**Key Finding:** The codebase currently uses Pion v1 packages (`pion/rtcp@v1.2.16`, `pion/rtp@v1.10.0`, `pion/interceptor@v0.1.43`). All recommended types are available in these versions with stable APIs.
+**Key Finding:** The existing codebase has a manual Chrome interop test (`cmd/chrome-interop`). E2E testing automates this with programmatic browser control and network condition simulation.
 
-**Recommendation:** Adopt Pion extension types (`AbsSendTimeExtension`, `AbsCaptureTimeExtension`) to replace custom parsing, while retaining custom REMB wrapper for domain-specific API. Extension helper utilities can remain as-is (already optimal).
+**Recommendation:** Use Rod for browser automation (simpler API, better performance), Toxiproxy for network simulation (battle-tested, Go client), and chromedp/headless-shell Docker image for CI.
 
 ---
 
-## Adoptable Types
+## Recommended Stack
 
-### 1. pion/rtp: AbsSendTimeExtension
+### Browser Automation: Rod
 
-**Package:** `github.com/pion/rtp` (v1.10.0+)
+| Attribute | Value |
+|-----------|-------|
+| **Package** | `github.com/go-rod/rod` |
+| **Version** | v0.116.2+ |
+| **License** | MIT |
+| **Purpose** | Chrome automation via DevTools Protocol |
 
-**What it provides:**
+**Why Rod over chromedp:**
+
+| Criterion | Rod | chromedp | Winner |
+|-----------|-----|----------|--------|
+| JSON decoding | Decode-on-demand | Every message | **Rod** |
+| Concurrency | goob-based, no deadlocks | Fixed-size buffer, can deadlock | **Rod** |
+| Memory | Lightweight | 1MB overhead per CDP client | **Rod** |
+| API style | Chainable, simple | DSL-like tasks, verbose | **Rod** |
+| Browser management | Auto-downloads Chrome | Relies on system browser | **Rod** |
+| Network inspection | `HijackRequests` built-in | Manual CDP calls | **Rod** |
+
+**WebRTC-specific advantages:**
+- `HijackRequests` simplifies debugging signaling
+- `WaitStable()` handles async WebRTC connection establishment
+- Thread-safe operations for concurrent test execution
+- No zombie processes after test crashes (important for CI)
+
+**Installation:**
+```bash
+go get github.com/go-rod/rod@v0.116.2
+```
+
+**Sources:**
+- [Rod GitHub](https://github.com/go-rod/rod) - HIGH confidence
+- [Rod vs chromedp](https://github.com/go-rod/go-rod.github.io/blob/main/why-rod.md) - HIGH confidence
+- [Rod pkg.go.dev](https://pkg.go.dev/github.com/go-rod/rod) - HIGH confidence
+
+---
+
+### Network Simulation: Toxiproxy
+
+| Attribute | Value |
+|-----------|-------|
+| **Server** | `github.com/Shopify/toxiproxy` |
+| **Client** | `github.com/Shopify/toxiproxy/v2/client` |
+| **Version** | v2.12.0 |
+| **License** | MIT |
+| **Purpose** | TCP proxy with network condition simulation |
+
+**Available toxics for BWE testing:**
+
+| Toxic | BWE Test Use Case | Parameters |
+|-------|-------------------|------------|
+| `latency` | Test delay estimation accuracy | `latency`, `jitter` (ms) |
+| `bandwidth` | Test AIMD convergence under bandwidth caps | `rate` (KB/s) |
+| `slicer` | Simulate jitter (packet fragmentation) | `average_size`, `size_variation`, `delay` |
+| `timeout` | Test stall detection | `timeout` (ms) |
+| `reset_peer` | Test recovery from connection loss | `timeout` (ms) |
+| `limit_data` | Test behavior at data limits | `bytes` |
+
+**Why Toxiproxy over alternatives:**
+
+| Alternative | Why Not |
+|-------------|---------|
+| tc/netem (Linux) | OS-specific, requires root, not portable to macOS/CI |
+| ooni/netem | No releases, Gvisor complexity, race detector issues on macOS |
+| comcast (CLI) | Less programmatic control, wrapper around tc |
+| Custom UDP proxy | Complexity; Toxiproxy handles TCP signaling |
+
+**Important limitation:** Toxiproxy is TCP-only. It cannot simulate UDP/RTP packet loss directly. However, for E2E testing:
+- WebRTC signaling (HTTP/WebSocket) goes through TCP - Toxiproxy works
+- RTP/RTCP uses UDP - simulate via latency/jitter on signaling, or use Pion's internal test utilities for UDP simulation
+
+**Installation:**
+```bash
+# Go client
+go get github.com/Shopify/toxiproxy/v2@v2.12.0
+
+# Server (local development)
+brew install toxiproxy  # macOS
+# or Docker
+docker run -p 8474:8474 ghcr.io/shopify/toxiproxy:2.12.0
+```
+
+**Sources:**
+- [Toxiproxy GitHub](https://github.com/Shopify/toxiproxy) - HIGH confidence
+- [Toxiproxy Go client](https://pkg.go.dev/github.com/Shopify/toxiproxy/v2/client) - HIGH confidence
+
+---
+
+### CI: GitHub Actions with Docker
+
+| Component | Image/Runner | Purpose |
+|-----------|--------------|---------|
+| **Chrome** | `chromedp/headless-shell:latest` | Headless Chrome for E2E tests |
+| **Toxiproxy** | `ghcr.io/shopify/toxiproxy:2.12.0` | Network simulation |
+| **Runner** | `ubuntu-latest` | GitHub Actions runner |
+
+**GitHub Actions Service Containers:**
+
+Service containers run alongside test jobs, providing dependencies (Chrome, Toxiproxy) without manual setup.
+
+**Chrome WebRTC flags:**
+
+| Flag | Purpose | Required |
+|------|---------|----------|
+| `--use-fake-device-for-media-stream` | Synthetic video/audio | Yes |
+| `--use-fake-ui-for-media-stream` | Auto-grant media permissions | Yes |
+| `--no-sandbox` | Required in Docker | Yes (CI) |
+| `--disable-gpu` | Stability in headless mode | Recommended |
+| `--headless=new` | Modern headless mode | Yes |
+
+**Optional flags for deterministic testing:**
+
+| Flag | Purpose |
+|------|---------|
+| `--use-file-for-fake-video-capture=path.y4m` | Use specific video file |
+| `--use-file-for-fake-audio-capture=path.wav` | Use specific audio file |
+
+**Sources:**
+- [WebRTC.org testing](https://webrtc.github.io/webrtc-org/testing/) - HIGH confidence
+- [chromedp/headless-shell](https://github.com/chromedp/docker-headless-shell) - HIGH confidence
+- [GitHub Actions Chrome testing](https://pradappandiyan.medium.com/running-ui-automation-tests-with-go-and-chrome-on-github-actions-1f56d7c63405) - MEDIUM confidence
+
+---
+
+## Integration with Existing Codebase
+
+### Current go.mod
+
 ```go
-type AbsSendTimeExtension struct {
-    Timestamp uint64  // 24-bit abs-send-time as 64-bit for convenience
+go 1.25
+
+require (
+    github.com/pion/interceptor v0.1.43
+    github.com/pion/rtcp v1.2.16
+    github.com/pion/rtp v1.10.0
+    github.com/pion/webrtc/v4 v4.2.3
+    github.com/stretchr/testify v1.11.1
+)
+```
+
+### Additions for E2E Testing
+
+```go
+require (
+    // Browser automation
+    github.com/go-rod/rod v0.116.2
+
+    // Network simulation
+    github.com/Shopify/toxiproxy/v2 v2.12.0
+)
+```
+
+### No Conflicts Expected
+
+- Rod: Zero overlapping dependencies with Pion
+- Toxiproxy client: Pure Go with minimal dependencies
+- Both MIT licensed (compatible with project)
+
+---
+
+## Alternatives Considered
+
+### Browser Automation
+
+| Considered | Verdict | Reason |
+|------------|---------|--------|
+| **chromedp** | Rejected | Fixed-size buffer deadlocks, heavier memory, no auto browser management |
+| **playwright-go** | Rejected | Requires ~50MB Node.js runtime; overkill for single-browser testing |
+| **Selenium** | Rejected | Heavyweight, external WebDriver binary, slower startup |
+
+**playwright-go detail:**
+
+playwright-go (v0.5200.1) is powerful but:
+- Ships Node.js runtime + Playwright (~50MB binary)
+- Architecture: Go -> stdio -> Node.js -> CDP -> Browser
+- Overhead not justified for single-browser Chrome testing
+- Shines for cross-browser (Chromium, Firefox, WebKit) which we don't need
+
+### Network Simulation
+
+| Considered | Verdict | Reason |
+|------------|---------|--------|
+| **tc/netem** | Rejected | Linux-only, requires root, not portable to macOS/GitHub Actions |
+| **ooni/netem** | Rejected | No official releases, Gvisor complexity, race detector issues on macOS |
+| **Custom UDP proxy** | Rejected | High effort; use Pion internal utilities for UDP simulation |
+
+**ooni/netem detail:**
+
+Interesting (userspace TCP/IP via Gvisor) but:
+- No official releases (commit-based versioning)
+- Requires pinning specific Gvisor commit manually
+- Race detector "very slow under macOS and many tests will fail"
+- Requires Go 1.20 (project uses Go 1.25)
+- Complex architecture for TCP proxy needs
+
+---
+
+## What NOT to Add
+
+| Technology | Reason |
+|------------|--------|
+| Selenium/WebDriver | Heavyweight, slower, external binary dependency |
+| playwright-go | Node.js runtime overhead for single-browser scenario |
+| tc/netem directly | Not portable (Linux-only, requires root) |
+| BrowserStack/Sauce Labs | External dependency, cost, overkill for library testing |
+| Puppeteer via WASM | Experimental, unneeded complexity |
+| Custom network emulator | Toxiproxy is battle-tested and sufficient |
+
+---
+
+## Sample Code Patterns
+
+### Rod with WebRTC Flags
+
+```go
+import (
+    "github.com/go-rod/rod"
+    "github.com/go-rod/rod/lib/launcher"
+)
+
+func setupBrowser(t *testing.T) *rod.Browser {
+    t.Helper()
+
+    l := launcher.New().
+        Headless(true).
+        Set("use-fake-device-for-media-stream").
+        Set("use-fake-ui-for-media-stream").
+        Set("no-sandbox").
+        Set("disable-gpu")
+
+    browser := rod.New().ControlURL(l.MustLaunch()).MustConnect()
+    t.Cleanup(func() { browser.MustClose() })
+
+    return browser
 }
 
-func (e *AbsSendTimeExtension) Unmarshal(rawData []byte) error
-func (e *AbsSendTimeExtension) Marshal() ([]byte, error)
-func (e *AbsSendTimeExtension) MarshalTo(buf []byte) (int, error)
-func (e *AbsSendTimeExtension) MarshalSize() int
-func (e *AbsSendTimeExtension) Estimate(receive time.Time) time.Time
-func NewAbsSendTimeExtension(sendTime time.Time) *AbsSendTimeExtension
-```
+func TestBWEWithChrome(t *testing.T) {
+    browser := setupBrowser(t)
 
-**Replaces:** `pkg/bwe/timestamp.go` - `ParseAbsSendTime()` function
+    page := browser.MustPage("http://localhost:8080")
+    page.MustElement("#startBtn").MustClick()
+    page.MustWaitStable()
 
-**Current Usage in Codebase:**
-```go
-// pkg/bwe/interceptor/interceptor.go:182-183
-if ext := header.GetExtension(absID); len(ext) >= 3 {
-    sendTime, _ = bwe.ParseAbsSendTime(ext)
+    // Assert connection established
+    status := page.MustElement("#status").MustText()
+    assert.Contains(t, status, "Connected")
 }
 ```
 
-**After Adoption:**
+### Toxiproxy for Network Conditions
+
 ```go
-if ext := header.GetExtension(absID); len(ext) >= 3 {
-    var absSend rtp.AbsSendTimeExtension
-    if err := absSend.Unmarshal(ext); err == nil {
-        sendTime = uint32(absSend.Timestamp & 0xFFFFFF) // Extract 24-bit value
-    }
+import (
+    toxiproxy "github.com/Shopify/toxiproxy/v2/client"
+    "testing"
+)
+
+func TestBWEUnderLatency(t *testing.T) {
+    client := toxiproxy.NewClient("localhost:8474")
+
+    // Create proxy for test server
+    proxy, err := client.CreateProxy("webrtc", "localhost:8081", "localhost:8080")
+    require.NoError(t, err)
+    t.Cleanup(func() { proxy.Delete() })
+
+    // Add 100ms latency with 20ms jitter
+    _, err = proxy.AddToxic("latency", "latency", "downstream", 1.0, toxiproxy.Attributes{
+        "latency": 100,
+        "jitter":  20,
+    })
+    require.NoError(t, err)
+
+    // Run E2E test through proxy (connect to :8081 instead of :8080)
+    runBWETest(t, "http://localhost:8081")
+}
+
+func TestBWEUnderBandwidthLimit(t *testing.T) {
+    client := toxiproxy.NewClient("localhost:8474")
+
+    proxy, err := client.CreateProxy("webrtc-bw", "localhost:8082", "localhost:8080")
+    require.NoError(t, err)
+    t.Cleanup(func() { proxy.Delete() })
+
+    // Limit to 500 KB/s
+    _, err = proxy.AddToxic("bandwidth", "bandwidth", "downstream", 1.0, toxiproxy.Attributes{
+        "rate": 500,
+    })
+    require.NoError(t, err)
+
+    runBWETest(t, "http://localhost:8082")
 }
 ```
 
-**Integration Complexity:** **EASY**
-- Drop-in replacement for parsing logic
-- Existing tests can verify behavior equivalence
-- `AbsSendTimeExtension.Timestamp` is uint64 but stores 24-bit value (mask with `& 0xFFFFFF`)
-- No API changes to `PacketInfo` struct (still passes `uint32`)
+### GitHub Actions Workflow
 
-**Benefits:**
-- Maintained by Pion core team (bug fixes, optimizations)
-- Follows RFC standards explicitly
-- `Estimate()` method provides send time reconstruction (bonus utility)
-- `NewAbsSendTimeExtension()` simplifies creating extensions for testing
+```yaml
+name: E2E Tests
 
-**Lines of Code Removed:** ~20 lines (parsing + error handling)
+on: [push, pull_request]
 
----
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
 
-### 2. pion/rtp: AbsCaptureTimeExtension
+    services:
+      toxiproxy:
+        image: ghcr.io/shopify/toxiproxy:2.12.0
+        ports:
+          - 8474:8474
+          - 8080-8090:8080-8090
 
-**Package:** `github.com/pion/rtp` (v1.10.0+)
+      chrome:
+        image: chromedp/headless-shell:latest
+        ports:
+          - 9222:9222
+        options: --shm-size=2g
 
-**What it provides:**
-```go
-type AbsCaptureTimeExtension struct {
-    Timestamp                   uint64   // UQ32.32 format capture time
-    EstimatedCaptureClockOffset *int64   // Optional clock offset (ptr for optional)
-}
+    steps:
+      - uses: actions/checkout@v4
 
-func (e *AbsCaptureTimeExtension) Unmarshal(rawData []byte) error
-func (e *AbsCaptureTimeExtension) Marshal() ([]byte, error)
-func (e *AbsCaptureTimeExtension) MarshalTo(buf []byte) (int, error)
-func (e *AbsCaptureTimeExtension) MarshalSize() int
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Run E2E tests
+        run: go test -v -tags=e2e ./...
+        env:
+          CHROME_WS_URL: ws://localhost:9222
+          TOXIPROXY_URL: localhost:8474
 ```
 
-**Replaces:** `pkg/bwe/timestamp.go` - `ParseAbsCaptureTime()` function
-
-**Current Usage in Codebase:**
-```go
-// pkg/bwe/interceptor/interceptor.go:189-190
-if ext := header.GetExtension(captureID); len(ext) >= 8 {
-    captureTime, err := bwe.ParseAbsCaptureTime(ext)
-    if err == nil {
-        // Convert 64-bit UQ32.32 to 24-bit 6.18 fixed point
-        // ... conversion logic ...
-    }
-}
-```
-
-**After Adoption:**
-```go
-if ext := header.GetExtension(captureID); len(ext) >= 8 {
-    var absCapture rtp.AbsCaptureTimeExtension
-    if err := absCapture.Unmarshal(ext); err == nil {
-        captureTime := absCapture.Timestamp
-        // ... conversion logic remains ...
-    }
-}
-```
-
-**Integration Complexity:** **EASY**
-- Direct replacement for parsing
-- Handles optional `EstimatedCaptureClockOffset` field (currently not used by BWE)
-- Same parsing behavior as custom implementation
-
-**Benefits:**
-- Handles optional clock offset field (future-proofing)
-- Maintained by Pion (spec updates, bug fixes)
-- Validates extension format strictly
-
-**Lines of Code Removed:** ~25 lines (parsing + error handling)
-
----
-
-### 3. pion/rtcp: ReceiverEstimatedMaximumBitrate
-
-**Package:** `github.com/pion/rtcp` (v1.2.16+)
-
-**What it provides:**
-```go
-type ReceiverEstimatedMaximumBitrate struct {
-    SenderSSRC uint32
-    Bitrate    float32    // Note: float32, not uint64
-    SSRCs      []uint32
-}
-
-func (r *ReceiverEstimatedMaximumBitrate) Marshal() ([]byte, error)
-func (r *ReceiverEstimatedMaximumBitrate) Unmarshal(buf []byte) error
-func (r *ReceiverEstimatedMaximumBitrate) DestinationSSRC() []uint32
-func (r *ReceiverEstimatedMaximumBitrate) String() string
-```
-
-**Current Implementation:** `pkg/bwe/remb.go`
-- `REMBPacket` struct (wrapper with `uint64` bitrate)
-- `BuildREMB()` function (already uses `rtcp.ReceiverEstimatedMaximumBitrate`)
-- `ParseREMB()` function (wrapper for testing)
-
-**Replacement Evaluation:** **RETAIN CUSTOM WRAPPER**
-
-**Rationale:**
-The current implementation is already a thin, well-designed wrapper around `pion/rtcp.ReceiverEstimatedMaximumBitrate`. The custom `REMBPacket` struct provides:
-
-1. **Type Safety:** Uses `uint64` for `Bitrate` (bits-per-second) instead of Pion's `float32`, avoiding float arithmetic in core BWE logic
-2. **Domain API:** Provides `ParseREMB()` for testing/debugging without exposing RTCP details
-3. **Future-Proofing:** Encapsulates Pion types, making future migrations easier
-
-**Current Implementation Analysis:**
-```go
-// BuildREMB already uses Pion's type
-func BuildREMB(senderSSRC uint32, bitrateBps uint64, mediaSSRCs []uint32) ([]byte, error) {
-    pkt := &rtcp.ReceiverEstimatedMaximumBitrate{
-        SenderSSRC: senderSSRC,
-        Bitrate:    float32(bitrateBps),  // Conversion handled here
-        SSRCs:      mediaSSRCs,
-    }
-    return pkt.Marshal()
-}
-```
-
-This is **optimal design** - the wrapper is minimal and provides domain-specific ergonomics.
-
-**Integration Complexity:** **N/A (No Change Recommended)**
-
-**Lines of Code Removed:** 0 (wrapper is valuable)
-
----
-
-### 4. pion/rtp: Header Extension Methods
-
-**Package:** `github.com/pion/rtp` (v1.10.0+)
-
-**What it provides:**
-```go
-// On rtp.Header type
-func (h *Header) GetExtension(id uint8) []byte
-func (h *Header) SetExtension(id uint8, payload []byte) error
-func (h *Header) SetExtensionWithProfile(id uint8, payload []byte, profile uint16) error
-func (h *Header) DelExtension(id uint8) error
-func (h *Header) GetExtensionIDs() []uint8
-```
-
-**Current Usage:** Already used directly in `pkg/bwe/interceptor/interceptor.go`
+### Build Tags for E2E Tests
 
 ```go
-if ext := header.GetExtension(absID); len(ext) >= 3 {
-    // ... parsing ...
-}
+//go:build e2e
+// +build e2e
+
+package e2e_test
+
+// E2E tests isolated from unit tests
+// Run with: go test -tags=e2e ./...
 ```
 
-**Integration Complexity:** **ALREADY INTEGRATED**
-
-**Recommendation:** Continue using as-is. No custom wrapper needed.
-
 ---
 
-### 5. pion/interceptor: RTPHeaderExtension
+## Installation Commands
 
-**Package:** `github.com/pion/interceptor` (v0.1.43+)
+```bash
+# Add E2E testing dependencies
+go get github.com/go-rod/rod@v0.116.2
+go get github.com/Shopify/toxiproxy/v2@v2.12.0
 
-**What it provides:**
-```go
-type RTPHeaderExtension struct {
-    URI string
-    ID  int
-}
+# Local development: install toxiproxy server
+# macOS:
+brew install toxiproxy
+
+# Linux:
+wget https://github.com/Shopify/toxiproxy/releases/download/v2.12.0/toxiproxy-server-linux-amd64
+chmod +x toxiproxy-server-linux-amd64
+./toxiproxy-server-linux-amd64
+
+# Or Docker (any platform):
+docker run -d -p 8474:8474 --name toxiproxy ghcr.io/shopify/toxiproxy:2.12.0
+
+# For Rod: Chrome is auto-downloaded on first run
+# Or use system Chrome: ROD_BROWSER=/path/to/chrome go test -tags=e2e ./...
 ```
-
-**Current Implementation:** `pkg/bwe/interceptor/extension.go`
-- `FindExtensionID()` - Searches for extension by URI
-- `FindAbsSendTimeID()` - Convenience wrapper for abs-send-time
-- `FindAbsCaptureTimeID()` - Convenience wrapper for abs-capture-time
-
-**Replacement Evaluation:** **RETAIN CUSTOM HELPERS**
-
-**Rationale:**
-The custom helper functions provide ergonomic, domain-specific utilities that are not available in `pion/interceptor`:
-
-1. `FindExtensionID()` - Generic search by URI (not in Pion)
-2. `FindAbsSendTimeID()` - One-line lookup for abs-send-time
-3. `FindAbsCaptureTimeID()` - One-line lookup for abs-capture-time
-
-These are **15 lines of pure utility code** that improve readability:
-
-```go
-// Before (without helpers)
-var absID uint8
-for _, ext := range streamInfo.RTPHeaderExtensions {
-    if ext.URI == "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" {
-        absID = uint8(ext.ID)
-        break
-    }
-}
-
-// After (with helpers)
-absID := FindAbsSendTimeID(streamInfo.RTPHeaderExtensions)
-```
-
-**Integration Complexity:** **N/A (No Change Recommended)**
-
-**Lines of Code Removed:** 0 (helpers are valuable)
-
----
-
-## Non-Adoptable Pion Types
-
-### pion/rtp: Extension Interfaces (OneByteHeaderExtension, TwoByteHeaderExtension)
-
-**Why Not Adopt:**
-- BWE interceptor only **reads** extension data (never creates/modifies RTP packets)
-- Extension format negotiation handled by WebRTC layer
-- No need for extension marshaling logic in BWE
-
-**Current Approach is Optimal:** Use `Header.GetExtension()` to retrieve raw bytes, then unmarshal with specific extension types.
-
----
-
-### pion/interceptor: Attributes, StreamInfo
-
-**Why Not Adopt More:**
-- Already using `StreamInfo` struct (contains `RTPHeaderExtensions`)
-- `Attributes` key-value store not needed for BWE (no inter-interceptor communication)
-- Current usage is minimal and correct
-
----
-
-## Version Requirements
-
-### Current Versions (from go.mod)
-
-| Package | Current Version | Latest Stable | Recommendation |
-|---------|-----------------|---------------|----------------|
-| `github.com/pion/rtcp` | v1.2.16 | v1.2.16 | ✅ Keep current |
-| `github.com/pion/rtp` | v1.10.0 | v1.10.0 | ✅ Keep current |
-| `github.com/pion/interceptor` | v0.1.43 | v0.1.43 | ✅ Keep current |
-
-**Note on pion/rtp v2:**
-- v2.0.0 exists but removed deprecated fields (`PayloadOffset`, `Raw`)
-- Breaking change requires coordinated upgrade with `pion/webrtc@v4`
-- **No value for BWE use case** (v1 API is sufficient)
-- Stick with v1.x for stability
-
-### Minimum Version Requirements for Adoptable Types
-
-| Type | Minimum Version | Notes |
-|------|-----------------|-------|
-| `AbsSendTimeExtension` | `pion/rtp@v1.8.0` | Stable since 2021 |
-| `AbsCaptureTimeExtension` | `pion/rtp@v1.8.0` | Stable since 2021 |
-| `ReceiverEstimatedMaximumBitrate` | `pion/rtcp@v1.2.0` | Already in use |
-
-**Verdict:** Current versions support all adoptable types. No upgrades required.
-
----
-
-## Integration Complexity Assessment
-
-### EASY: Extension Type Adoption
-
-| Task | Complexity | Effort | Risk |
-|------|-----------|--------|------|
-| Replace `ParseAbsSendTime()` with `AbsSendTimeExtension.Unmarshal()` | EASY | 30 min | LOW |
-| Replace `ParseAbsCaptureTime()` with `AbsCaptureTimeExtension.Unmarshal()` | EASY | 30 min | LOW |
-| Update tests to verify equivalence | EASY | 1 hour | LOW |
-
-**Total Effort:** ~2 hours for both extensions
-
-**Testing Strategy:**
-1. Run existing test suite (validates behavior equivalence)
-2. Verify no performance regression (run benchmarks)
-3. Fuzz test edge cases (malformed extension data)
-
-### N/A: REMB and Extension Helpers
-
-**No changes recommended** - Current implementations are optimal wrappers providing domain-specific ergonomics.
-
----
-
-## Migration Plan
-
-### Phase 1: Adopt Extension Types (Milestone Goal)
-
-**Scope:** Replace custom parsing with Pion types
-
-**Changes:**
-1. Update `pkg/bwe/interceptor/interceptor.go`:
-   - Import `github.com/pion/rtp`
-   - Replace `bwe.ParseAbsSendTime()` calls with `rtp.AbsSendTimeExtension.Unmarshal()`
-   - Replace `bwe.ParseAbsCaptureTime()` calls with `rtp.AbsCaptureTimeExtension.Unmarshal()`
-
-2. Deprecate (but retain) custom parsing functions:
-   - Mark `ParseAbsSendTime()` as deprecated in `pkg/bwe/timestamp.go`
-   - Mark `ParseAbsCaptureTime()` as deprecated in `pkg/bwe/timestamp.go`
-   - Keep functions for backward compatibility (remove in future milestone)
-
-3. Update tests:
-   - Verify Pion types produce identical results to custom parsing
-   - Add test cases for Pion-specific edge cases
-
-**Lines of Code Delta:**
-- Added: ~10 lines (Unmarshal calls with error handling)
-- Removed: ~45 lines (deprecated parsing functions)
-- Net: -35 lines
-
-**Breaking Changes:** None (internal refactor only)
-
-### Phase 2: Remove Deprecated Functions (Future Milestone)
-
-**Scope:** Clean up deprecated parsing functions after validation period
-
-**Changes:**
-1. Remove `ParseAbsSendTime()` from `pkg/bwe/timestamp.go`
-2. Remove `ParseAbsCaptureTime()` from `pkg/bwe/timestamp.go`
-3. Remove related test cases (or convert to Pion type tests)
-
-**Lines of Code Removed:** ~45 lines
-
----
-
-## Benefits of Adoption
-
-### 1. Reduced Maintenance Burden
-
-| Aspect | Before | After |
-|--------|--------|-------|
-| Parsing Logic | Custom implementation | Pion-maintained |
-| Spec Updates | Manual tracking | Upstream updates |
-| Bug Fixes | DIY | Upstream patches |
-| Testing | Custom test cases | Pion's test suite + ours |
-
-### 2. Improved Interoperability
-
-- **Standards Compliance:** Pion types follow RFCs strictly
-- **Ecosystem Compatibility:** Same types used by pion/webrtc, mediamtx, livekit
-- **Upstream Contribution:** Using Pion types makes BWE library easier to upstream
-
-### 3. Code Quality
-
-- **Fewer LOC:** ~35 lines removed in Phase 1
-- **Type Safety:** Pion types handle edge cases (nil checks, length validation)
-- **Documentation:** Pion types are well-documented with RFC references
-
----
-
-## Risks and Mitigations
-
-### Risk 1: Behavior Differences
-
-**Risk:** Pion parsing might differ subtly from custom implementation
-
-**Likelihood:** LOW (both follow same RFCs)
-
-**Mitigation:**
-- Comprehensive equivalence testing before merging
-- Run validation tests (GCC algorithm compliance tests)
-- Gradual rollout (feature flag if needed)
-
-### Risk 2: Performance Regression
-
-**Risk:** Pion types might be slower than custom parsing
-
-**Likelihood:** VERY LOW (Pion is optimized for WebRTC)
-
-**Mitigation:**
-- Benchmark before/after (use existing `BenchmarkRTPHeader_GetExtension_Allocations`)
-- Profile hot paths with pprof
-- Pion types are allocation-free (proven by production usage)
-
-### Risk 3: API Changes in Future Pion Versions
-
-**Risk:** Pion v2 or future versions might break APIs
-
-**Likelihood:** MEDIUM (v2 already exists with breaking changes)
-
-**Mitigation:**
-- Pin to v1.x in go.mod (semantic versioning guarantees)
-- Monitor Pion release notes for deprecations
-- Custom wrapper provides insulation layer (already done for REMB)
 
 ---
 
 ## Confidence Assessment
 
-| Area | Confidence | Reason |
-|------|-----------|--------|
-| Extension Types | **HIGH** | Verified in official docs, stable since 2021 |
-| Version Compatibility | **HIGH** | Current go.mod already has required versions |
-| Integration Effort | **HIGH** | Simple drop-in replacement, tests validate |
-| Performance | **HIGH** | Pion used in production WebRTC (scalable) |
-| Maintenance Benefit | **HIGH** | Proven by Pion ecosystem (webrtc, mediamtx) |
+| Component | Confidence | Basis |
+|-----------|------------|-------|
+| Rod selection | **HIGH** | Official docs, GitHub comparison, pkg.go.dev |
+| Toxiproxy selection | **HIGH** | Official docs, Shopify maintenance, Go client docs |
+| Chrome flags | **HIGH** | webrtc.org official testing documentation |
+| GitHub Actions approach | **MEDIUM** | Community articles, Docker image docs |
+| Version numbers | **HIGH** | pkg.go.dev verified (2026-01-22) |
 
 **Overall Confidence: HIGH**
 
@@ -448,44 +404,45 @@ absID := FindAbsSendTimeID(streamInfo.RTPHeaderExtensions)
 
 ## Sources
 
-### Official Documentation
-- [pion/rtcp - Go Packages](https://pkg.go.dev/github.com/pion/rtcp) (v1.2.16)
-- [pion/rtp - Go Packages](https://pkg.go.dev/github.com/pion/rtp) (v1.10.0)
-- [pion/interceptor - Go Packages](https://pkg.go.dev/github.com/pion/interceptor) (v0.1.43)
+### Official Documentation (HIGH Confidence)
+- [Rod GitHub](https://github.com/go-rod/rod)
+- [Rod pkg.go.dev](https://pkg.go.dev/github.com/go-rod/rod) - v0.116.2
+- [Toxiproxy GitHub](https://github.com/Shopify/toxiproxy)
+- [Toxiproxy Go client](https://pkg.go.dev/github.com/Shopify/toxiproxy/v2/client) - v2.12.0
+- [WebRTC.org Testing](https://webrtc.github.io/webrtc-org/testing/)
+- [chromedp/headless-shell](https://github.com/chromedp/docker-headless-shell)
 
-### GitHub Source Code
-- [rtcp/receiver_estimated_maximum_bitrate.go](https://github.com/pion/rtcp/blob/master/receiver_estimated_maximum_bitrate.go) - REMB implementation
-- [rtp/abssendtimeextension.go](https://github.com/pion/rtp/blob/master/abssendtimeextension.go) - AbsSendTime extension
-- [rtp/packet.go](https://github.com/pion/rtp/blob/master/packet.go) - Header extension methods
-- [rtp/header_extension.go](https://github.com/pion/rtp/blob/master/header_extension.go) - Extension interfaces
-- [interceptor/streaminfo.go](https://github.com/pion/interceptor/blob/master/streaminfo.go) - RTPHeaderExtension type
+### Comparison/Analysis (MEDIUM Confidence)
+- [Rod vs chromedp](https://github.com/go-rod/go-rod.github.io/blob/main/why-rod.md)
+- [GitHub Actions Chrome testing](https://pradappandiyan.medium.com/running-ui-automation-tests-with-go-and-chrome-on-github-actions-1f56d7c63405)
+- [Toxiproxy usage guide](https://www.dolthub.com/blog/2024-03-13-golang-toxiproxy/)
 
-### Repository
-- [GitHub - pion/rtcp](https://github.com/pion/rtcp) - RTCP implementation
-- [GitHub - pion/rtp](https://github.com/pion/rtp) - RTP implementation
-- [GitHub - pion/interceptor](https://github.com/pion/interceptor) - Interceptor framework
-
-### Specifications
-- WebRTC abs-send-time: http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time
-- REMB Spec: https://tools.ietf.org/html/draft-alvestrand-rmcat-remb-03
+### Verified Versions (2026-01-22)
+| Package | Version | Source |
+|---------|---------|--------|
+| go-rod/rod | v0.116.2 | pkg.go.dev |
+| Shopify/toxiproxy/v2 | v2.12.0 | pkg.go.dev |
+| chromedp/chromedp | v0.13.2 | GitHub releases |
+| playwright-go | v0.5200.1 | GitHub releases |
 
 ---
 
 ## Recommendation Summary
 
-**Adopt:**
-1. ✅ `pion/rtp.AbsSendTimeExtension` - Replace `ParseAbsSendTime()`
-2. ✅ `pion/rtp.AbsCaptureTimeExtension` - Replace `ParseAbsCaptureTime()`
+**Add to project:**
 
-**Retain (Already Optimal):**
-1. ✅ `pkg/bwe/remb.go` - Custom REMB wrapper provides domain-specific ergonomics
-2. ✅ `pkg/bwe/interceptor/extension.go` - Custom extension helpers improve readability
-3. ✅ Direct use of `rtp.Header.GetExtension()` - Standard Pion API
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `github.com/go-rod/rod` | v0.116.2 | Chrome automation |
+| `github.com/Shopify/toxiproxy/v2` | v2.12.0 | Network simulation |
 
-**Total Impact:**
-- **Lines Removed:** ~35 lines (parsing logic)
-- **Maintenance Reduction:** 2 functions offloaded to Pion
-- **Interoperability:** +100% (standards-compliant types)
-- **Effort:** ~2 hours (low risk, high value)
+**CI Infrastructure:**
 
-**Next Steps:** Proceed to milestone implementation with extension type adoption as Phase 1 goal.
+| Component | Image | Purpose |
+|-----------|-------|---------|
+| Chrome | `chromedp/headless-shell:latest` | Headless browser |
+| Toxiproxy | `ghcr.io/shopify/toxiproxy:2.12.0` | Network proxy |
+
+**Total additions:** 2 Go dependencies, 2 Docker service containers
+
+**Next Steps:** Proceed to E2E testing implementation with this stack.

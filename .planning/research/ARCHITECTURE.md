@@ -1,515 +1,611 @@
-# Architecture Research: Pion Type Integration Strategy
+# Architecture Patterns: E2E Testing Infrastructure
 
-**Project:** GCC Receiver-Side Bandwidth Estimator
-**Milestone:** v1.1 Pion Type Adoption
+**Project:** GCC Receiver-Side BWE - E2E Testing (v1.2)
+**Domain:** WebRTC testing, browser automation, network simulation
 **Researched:** 2026-01-22
 **Confidence:** HIGH
 
 ## Executive Summary
 
-**Current state:** The BWE library has a "standalone core + interceptor adapter" design where `pkg/bwe` contains the GCC algorithm with NO Pion dependencies (9,110 lines), and `pkg/bwe/interceptor` provides the Pion integration layer.
+The BWE library has a mature testing foundation: unit tests colocated with source files, integration tests in `pkg/bwe/interceptor/integration_test.go`, a `testutil/` package for trace replay, and manual Chrome verification via `cmd/chrome-interop/`. The v1.2 E2E testing milestone needs to **automate** what is currently manual (browser interop) and **extend** testing to cover network conditions.
 
-**Exception:** `pkg/bwe/remb.go` ALREADY imports `github.com/pion/rtcp` (added in Phase 2, plan 02-03). This violates the original "standalone core" design but was a deliberate pragmatic decision.
+**Recommended architecture:**
+1. Create `e2e/` top-level directory for E2E test infrastructure (separate from unit tests)
+2. Use build tags (`//go:build e2e`) to keep E2E tests out of normal `go test` runs
+3. Adopt [chromedp](https://github.com/chromedp/chromedp) for browser automation (pure Go, no external dependencies)
+4. Create network simulation helpers using tc/netem (Linux) with Docker containers for CI
+5. Extend existing `cmd/chrome-interop/` as the test server, add automation hooks
 
-**The question:** Should we continue relaxing this boundary to adopt more Pion types, or maintain the separation?
+**Key integration points:**
+- `pkg/bwe/testutil/` - Extend with E2E helpers (browser client, network conditions)
+- `cmd/chrome-interop/` - Evolve from manual demo to headless test server
+- `.github/workflows/` - New CI workflow with browser + network simulation tests
 
-**Recommendation:** **Option B - Relax the boundary pragmatically.** Accept Pion types in core when they provide:
-1. Battle-tested marshalling/parsing (REMB, extensions)
-2. Type safety and interoperability
-3. Reduced maintenance burden
+## Current Test Architecture
 
-The "standalone core" was a means to an end (testability, clean separation), not a religious principle. Pion's `rtcp` and `rtp` packages are stable, well-tested, and domain-appropriate dependencies.
-
-## Current Boundary Analysis
-
-### What Exists Today
+### Existing Test Infrastructure
 
 ```
-pkg/bwe/                    # Core GCC algorithm (9,110 lines)
-├── types.go                # PacketInfo, BandwidthUsage (NO deps)
-├── timestamp.go            # Timestamp parsing (NO deps)
-├── interarrival.go         # Delay calculation (NO deps)
-├── trendline.go            # Filtering (NO deps)
-├── kalman.go               # Filtering (NO deps)
-├── overuse.go              # Congestion detection (NO deps)
-├── rate_controller.go      # AIMD (NO deps)
-├── rate_stats.go           # Bitrate measurement (NO deps)
-├── remb.go                 # ⚠️  REMB builder (IMPORTS pion/rtcp)
-├── remb_scheduler.go       # REMB scheduling (NO deps)
-├── estimator.go            # Delay estimator (NO deps)
-└── bandwidth_estimator.go  # Main facade (NO deps)
-
-pkg/bwe/interceptor/        # Pion integration
-├── extension.go            # Extension ID helpers (pion/interceptor)
-├── interceptor.go          # RTP observation (pion/rtp, pion/rtcp, pion/interceptor)
-├── stream.go               # Stream state (NO Pion deps)
-├── pool.go                 # sync.Pool for PacketInfo (NO deps)
-└── factory.go              # InterceptorFactory (pion/interceptor)
+bwe/
++-- pkg/bwe/
+|   +-- *_test.go              # Unit tests (colocated with source)
+|   |   +-- estimator_test.go     # Core algorithm tests
+|   |   +-- validation_test.go    # VALID-01 divergence tests
+|   |   +-- soak_test.go          # VALID-04 24-hour accelerated tests
+|   |   +-- benchmark_test.go     # Performance tests (0 allocs/op)
+|   +-- testutil/
+|   |   +-- traces.go             # Synthetic packet trace generators
+|   |   +-- reference_trace.go    # Reference trace replay infrastructure
+|   +-- interceptor/
+|       +-- interceptor_test.go   # Unit tests for interceptor
+|       +-- integration_test.go   # Pion interceptor integration tests
+|       +-- benchmark_test.go     # Interceptor benchmarks
++-- cmd/chrome-interop/
+|   +-- main.go                # Manual Chrome verification server
++-- testdata/
+    +-- reference_congestion.json  # Reference trace data
 ```
 
-### Current Imports in Core
+### Test Categories (Current)
 
-```bash
-$ go list -f '{{.Imports}}' ./pkg/bwe
-errors
-github.com/pion/rtcp        # ⚠️  ALREADY PRESENT
-math
-sync
-time
-bwe/pkg/bwe/internal
+| Category | Location | Run Command | CI Status |
+|----------|----------|-------------|-----------|
+| Unit tests | `*_test.go` colocated | `go test ./...` | Auto |
+| Benchmarks | `*_test.go` colocated | `go test -bench=.` | Auto |
+| Integration | `interceptor/integration_test.go` | `go test ./...` | Auto |
+| Soak tests | `soak_test.go` | `go test -run Soak` | Manual (long) |
+| Chrome interop | `cmd/chrome-interop/` | Manual browser | Manual |
+
+### What Needs Automation
+
+1. **Chrome interop (VALID-02)** - Currently requires manual: open browser, check webrtc-internals
+2. **Network simulation** - Not yet implemented: packet loss, bandwidth variation, latency
+3. **Full PeerConnection tests** - Currently only interceptor-level, need full connection
+4. **CI integration** - Soak tests and Chrome tests not in CI pipeline
+
+## Recommended Architecture
+
+### Directory Structure
+
+```
+bwe/
++-- pkg/bwe/
+|   +-- *_test.go              # Unit tests (unchanged)
+|   +-- testutil/
+|       +-- traces.go          # Existing trace generators
+|       +-- reference_trace.go # Existing replay infra
+|       +-- browser.go         # NEW: Browser automation helpers
+|       +-- network.go         # NEW: Network simulation helpers
++-- e2e/                       # NEW: E2E test directory
+|   +-- e2e_test.go            # Test entry point (requires build tag)
+|   +-- browser_test.go        # Chrome/browser automation tests
+|   +-- network_test.go        # Network condition tests
+|   +-- peerconnection_test.go # Full PeerConnection tests
+|   +-- testdata/              # E2E-specific test data
+|   +-- docker/
+|       +-- Dockerfile.chrome  # Chrome headless container
+|       +-- docker-compose.yml # Network simulation setup
++-- cmd/chrome-interop/
+|   +-- main.go                # Evolve: Add programmatic control
+|   +-- server.go              # NEW: Separate server logic
+|   +-- api.go                 # NEW: Control API for tests
++-- .github/workflows/
+    +-- test.yml               # Existing (if any)
+    +-- e2e.yml                # NEW: E2E workflow
 ```
 
-**Key observation:** The boundary is already crossed. `pkg/bwe/remb.go` imports `pion/rtcp` to use `rtcp.ReceiverEstimatedMaximumBitrate` for marshalling.
+### Component Boundaries
 
-### Why Was REMB Builder Put in Core?
+| Component | Responsibility | Depends On |
+|-----------|---------------|------------|
+| `pkg/bwe/testutil/browser.go` | Browser automation primitives (chromedp wrapper) | chromedp |
+| `pkg/bwe/testutil/network.go` | Network condition helpers (tc/netem wrapper) | Docker/tc (optional) |
+| `e2e/browser_test.go` | Chrome REMB verification tests | testutil/browser, cmd/chrome-interop |
+| `e2e/network_test.go` | Network simulation tests | testutil/network, pkg/bwe |
+| `e2e/peerconnection_test.go` | Full Pion PeerConnection tests | pion/webrtc, pkg/bwe/interceptor |
+| `cmd/chrome-interop/server.go` | WebRTC test server (SDP exchange) | pion/webrtc, pkg/bwe/interceptor |
 
-From Phase 2, plan 02-03 (REMB packet builder):
+### Data Flow
 
+```
+Browser Test Flow:
+-----------------
+1. e2e/browser_test.go starts cmd/chrome-interop server
+2. chromedp launches headless Chrome
+3. Chrome navigates to test server, initiates WebRTC
+4. BWE interceptor receives RTP, sends REMB
+5. chromedp queries webrtc-internals (or injects JS to capture stats)
+6. Test asserts REMB values visible in Chrome stats
+
+Network Simulation Flow:
+-----------------------
+1. e2e/network_test.go configures network conditions (via Docker or tc)
+2. Test server runs with BWE interceptor
+3. Synthetic RTP stream with applied network impairments
+4. BWE algorithm responds to conditions
+5. Test asserts estimate adapts appropriately (decrease under loss, etc.)
+
+PeerConnection Test Flow:
+------------------------
+1. e2e/peerconnection_test.go creates two Pion PeerConnections
+2. One peer sends video (with abs-send-time extension)
+3. Other peer has BWE interceptor
+4. Verify REMB packets sent, estimate converges
+5. No browser needed - pure Pion-to-Pion test
+```
+
+## Integration Points with Existing Infrastructure
+
+### Integration Point 1: testutil Package
+
+**Current state:** `pkg/bwe/testutil/` provides trace generators and replay infrastructure.
+
+**Extension:**
 ```go
-// BuildREMB creates a REMB RTCP packet from the given parameters.
-func BuildREMB(senderSSRC uint32, bitrateBps uint64, mediaSSRCs []uint32) ([]byte, error) {
-    pkt := &rtcp.ReceiverEstimatedMaximumBitrate{
-        SenderSSRC: senderSSRC,
-        Bitrate:    float32(bitrateBps),
-        SSRCs:      mediaSSRCs,
-    }
-    return pkt.Marshal()
-}
-```
-
-**Rationale from research notes:**
-> "Use pion/rtcp.ReceiverEstimatedMaximumBitrate"
-> "Do NOT hand-roll mantissa+exponent encoding"
-
-This was a **pragmatic decision:** Don't reinvent wire format encoding when a battle-tested library exists.
-
-## Options Analysis
-
-### Option A: Keep Boundary Strict (Pion Types Only in Interceptor)
-
-**What this means:**
-- Remove `pion/rtcp` import from `pkg/bwe/remb.go`
-- Move REMB marshalling to `pkg/bwe/interceptor`
-- Core returns structured data (e.g., `REMBData{Bitrate, SSRCs}`), interceptor marshals
-
-**Pros:**
-- Pure separation: Core is truly standalone
-- Core can be tested without any WebRTC dependencies
-- Could theoretically use core in non-WebRTC contexts
-
-**Cons:**
-- We'd have to revert existing working code that's been validated
-- Forces duplication: Core builds data structure, interceptor marshals it
-- Doesn't improve testability (current REMB tests work fine)
-- Adds complexity for theoretical purity
-- Still need to test marshalling somewhere (now in interceptor)
-
-**Impact on existing code:**
-```
-FILES TO MODIFY:
-- pkg/bwe/remb.go                   # Remove pion/rtcp, return struct
-- pkg/bwe/remb_test.go              # Update to test struct only
-- pkg/bwe/bandwidth_estimator.go    # Return REMBData instead of []byte
-- pkg/bwe/interceptor/interceptor.go # Add marshalling logic
-```
-
-**Verdict:** This is dogmatic purity. We already made the pragmatic choice in Phase 2.
-
-### Option B: Relax Boundary Pragmatically (Pion Types in Core) **[RECOMMENDED]**
-
-**What this means:**
-- Accept that `pion/rtcp` and `pion/rtp` are **domain dependencies**, not infrastructure
-- Keep REMB marshalling in core (status quo)
-- Add Pion extension types in core where they improve type safety
-- Maintain clean separation for algorithm logic (InterArrival, Kalman, AIMD, etc.)
-
-**Pros:**
-- Status quo for REMB (already works, already tested)
-- Reduces maintenance: Pion handles wire format edge cases
-- Better type safety: Use `rtcp.ReceiverEstimatedMaximumBitrate` instead of raw bytes
-- Easier interop: Core speaks the same types as Pion ecosystem
-- Still testable: Pion's RTCP/RTP packages are pure Go, no CGO, no external dependencies
-
-**Cons:**
-- Core is no longer "standalone" in the strict sense
-- Harder to port to non-Pion WebRTC stack (but who would do this?)
-- Adds Pion dependency to core (but it's a stable, well-maintained dependency)
-
-**What stays in core vs interceptor:**
-
-| Component | Location | Reasoning |
-|-----------|----------|-----------|
-| GCC algorithm (InterArrival, Kalman, AIMD) | Core | Pure algorithm logic, no domain types |
-| PacketInfo struct | Core | Domain type, but generic |
-| REMB marshalling | Core | Uses pion/rtcp (status quo) |
-| Extension parsing (abs-send-time) | Core | Domain operation, could use pion/rtp |
-| RTP packet observation | Interceptor | Pion-specific integration |
-| Stream lifecycle | Interceptor | Pion-specific integration |
-| RTCP writer binding | Interceptor | Pion-specific integration |
-
-**Impact on existing code:**
-```
-FILES TO MODIFY (for timestamp parsing improvements):
-- pkg/bwe/timestamp.go              # Optionally use pion/rtp helpers
-- pkg/bwe/timestamp_test.go         # Update tests
-
-FILES UNCHANGED (already use Pion):
-- pkg/bwe/remb.go                   # Already uses pion/rtcp
-- pkg/bwe/remb_test.go              # Already tests with pion/rtcp
-
-FILES UNCHANGED (pure algorithm):
-- pkg/bwe/interarrival.go
-- pkg/bwe/trendline.go
-- pkg/bwe/kalman.go
-- pkg/bwe/overuse.go
-- pkg/bwe/rate_controller.go
-- pkg/bwe/rate_stats.go
-- pkg/bwe/estimator.go
-- pkg/bwe/bandwidth_estimator.go
-```
-
-**Verdict:** This is the pragmatic path. Accept domain-level dependencies, reject infrastructure dependencies.
-
-### Option C: Split into Multiple Modules
-
-**What this means:**
-- Create separate Go modules:
-  - `bwe/core` - Pure algorithm, zero dependencies
-  - `bwe/types` - Shared types (maybe uses pion/rtcp)
-  - `bwe/pion` - Pion integration
-
-**Pros:**
-- Clear dependency boundaries enforced by Go module system
-- Users can import only what they need
-
-**Cons:**
-- Massive refactoring for no proven benefit
-- Complicates development (multi-module workspace)
-- Overkill for a library this size
-- Doesn't match user expectations (one import for BWE)
-
-**Verdict:** Over-engineering. Not appropriate for this codebase size.
-
-## Dependency Analysis: pion/rtcp and pion/rtp
-
-### What Are These Packages?
-
-From `go doc`:
-
-```
-package rtcp // import "github.com/pion/rtcp"
-
-RTCP marshaling and unmarshaling for RTP Control Protocol packets.
-Pure Go implementation, no CGO, no external dependencies.
-
-TYPES:
-  - ReceiverEstimatedMaximumBitrate (REMB)
-  - ReceiverReport, SenderReport
-  - TransportLayerNack, etc.
-```
-
-```
-package rtp // import "github.com/pion/rtp"
-
-RTP marshaling and unmarshaling for Real-time Transport Protocol packets.
-Pure Go implementation, handles header extensions, sequence numbers, etc.
-
-TYPES:
-  - Header (with extension parsing)
-  - Packet
-  - Extension handling
-```
-
-### Are These "Domain" or "Infrastructure"?
-
-**Domain dependencies** (acceptable in core):
-- Represent fundamental WebRTC/RTP concepts
-- Provide wire format correctness
-- Are stable, well-tested, pure Go
-
-**Infrastructure dependencies** (keep in adapter):
-- HTTP servers, databases
-- Pion PeerConnection, Interceptor interfaces
-- Anything with goroutines/state/lifecycle
-
-`pion/rtcp` and `pion/rtp` are **domain dependencies**. They're like `net/http` for HTTP headers or `encoding/json` for JSON - they represent the problem domain itself.
-
-### Stability and Maintenance
-
-```bash
-$ go list -m github.com/pion/rtcp
-github.com/pion/rtcp v1.2.16
-
-$ go list -m github.com/pion/rtp
-github.com/pion/rtp v1.10.0
-```
-
-- **pion/rtcp:** v1.2.16, mature, stable API, part of Pion ecosystem
-- **pion/rtp:** v1.10.0, mature, stable API, part of Pion ecosystem
-- Both are pure Go, no CGO, no system dependencies
-- Well-tested (used by thousands of Pion users)
-- Maintained by same team as pion/webrtc
-
-## Pragmatic Guideline: When to Accept Pion Deps in Core
-
-### Accept When:
-
-1. **Wire format marshalling/unmarshalling**
-   - Example: REMB packet encoding (mantissa+exponent is tricky)
-   - Reason: Don't reinvent binary protocols
-
-2. **RTP/RTCP type definitions**
-   - Example: Using `rtcp.ReceiverEstimatedMaximumBitrate` type
-   - Reason: Type safety and ecosystem compatibility
-
-3. **Extension parsing helpers**
-   - Example: abs-send-time, abs-capture-time extraction
-   - Reason: Pion's `rtp.Header.GetExtension` handles edge cases
-
-4. **Stable, pure-Go domain types**
-   - Reason: No runtime dependencies, just data structures and algorithms
-
-### Reject When:
-
-1. **Pion infrastructure types**
-   - Example: `interceptor.Interceptor`, `interceptor.RTCPWriter`
-   - Reason: These are integration points, belong in adapter
-
-2. **State/lifecycle management**
-   - Example: Stream tracking, timeout goroutines
-   - Reason: Core should be stateless functions/algorithms
-
-3. **Transport/network concerns**
-   - Example: RTCP sending, packet queueing
-   - Reason: Infrastructure concerns
-
-## Recommendation: Option B with Clear Guidelines
-
-### Adopt Pion Types in Core For:
-
-1. **REMB marshalling** (status quo)
-   - Keep `pion/rtcp` in `pkg/bwe/remb.go`
-   - Use `rtcp.ReceiverEstimatedMaximumBitrate`
-
-2. **Extension parsing improvements** (optional refinement)
-   - Consider using `pion/rtp.Header` helpers if they simplify timestamp parsing
-   - Current manual parsing in `timestamp.go` works, so LOW priority
-
-### Keep Pure Algorithm Logic Standalone:
-
-- InterArrival calculation
-- Kalman filter / Trendline estimator
-- Overuse detection
-- AIMD rate controller
-- Rate statistics
-
-These components have ZERO WebRTC-specific types - they operate on `time.Time`, `float64`, `int64`. Keep them pure.
-
-### Maintain Interceptor Separation:
-
-- RTP observation (`BindRemoteStream`)
-- RTCP sending (`BindRTCPWriter`)
-- Stream lifecycle
-- Pion interceptor interface implementation
-
-## Files Affected by Recommendation
-
-### No Changes Needed (Option B is Status Quo)
-
-```
-pkg/bwe/remb.go                     # Already uses pion/rtcp ✓
-pkg/bwe/bandwidth_estimator.go      # No changes needed ✓
-pkg/bwe/interceptor/interceptor.go  # No changes needed ✓
-```
-
-### Optional Refinements (LOW Priority)
-
-```
-pkg/bwe/timestamp.go                # Could use pion/rtp helpers (OPTIONAL)
-  Current: Manual 3-byte parsing works fine
-  Future: Consider pion/rtp.Extension helpers if they add value
-```
-
-## Testing Impact
-
-### Current Testing Strategy
-
-**Core tests** (no Pion needed, except remb.go):
-```bash
-$ go test ./pkg/bwe/...
-```
-- Tests use synthetic `PacketInfo` structs
-- REMB tests use `pion/rtcp` for round-trip verification
-- No goroutines, no network, pure unit tests
-
-**Interceptor tests** (need Pion):
-```bash
-$ go test ./pkg/bwe/interceptor/...
-```
-- Mock Pion interfaces
-- Test RTP observation flow
-- Test REMB sending
-
-### Impact of Option B (Recommended)
-
-**No change.** This is already how testing works. REMB tests already verify marshalling with `pion/rtcp`.
-
-### Impact of Option A (Strict Boundary)
-
-**Worse.** Would need to test REMB marshalling in interceptor layer, making it harder to unit test core functionality.
-
-## Architecture Principles (Updated)
-
-### Domain-Driven Design Perspective
-
-From recent architectural guidance ([Clean Architecture in Go](https://threedots.tech/post/introducing-clean-architecture/), [Hexagonal Architecture](https://skoredin.pro/blog/golang/hexagonal-architecture-go)):
-
-> "The domain layer should not depend on technical details like HTTP or SQL. But domain concepts - like RTCP packets in a WebRTC bandwidth estimator - are part of the domain, not infrastructure."
-
-**Applied to BWE:**
-- RTCP (REMB packets) = **Domain concept** (the algorithm produces REMB feedback)
-- RTP packets (timestamps, extensions) = **Domain concept** (the algorithm consumes RTP metadata)
-- PeerConnection, Interceptor interfaces = **Infrastructure** (how we integrate with Pion)
-
-### Pragmatic Clean Architecture
-
-From [Pragmatic Clean Architecture](https://blog.codewithram.dev/blog/clean-architecture-developer-journey.html):
-
-> "Be Pragmatic: Fit the architecture to the project — not the other way around. Every rule is bendable if it makes the system easier to work with."
-
-**Applied to BWE:**
-- Don't ban `pion/rtcp` just to satisfy "zero dependencies" purity
-- Do ban `pion/webrtc` or `pion/interceptor` in core (wrong layer)
-- Focus on **testability** and **maintainability**, not dogma
-
-### Updated Design Principle
-
-**Old principle (Phase 1):**
-> "Standalone core with NO Pion dependencies"
-
-**New principle (Post-Phase 2):**
-> "Algorithm-focused core with domain-level dependencies acceptable, infrastructure-level dependencies in adapter"
-
-**In practice:**
-- ✅ `pion/rtcp`, `pion/rtp` (domain types, wire formats)
-- ✅ `time`, `math`, `errors` (stdlib)
-- ❌ `pion/webrtc`, `pion/interceptor` (infrastructure)
-- ❌ HTTP, databases, anything with goroutines/state in core
-
-## Migration Path (if pursuing Option A)
-
-**IF** you wanted to enforce strict boundary (not recommended), here's the path:
-
-### Step 1: Define Core Interface
-
-```go
-// pkg/bwe/remb.go
-package bwe
-
-type REMBData struct {
-    SenderSSRC uint32
-    Bitrate    uint64
-    SSRCs      []uint32
-}
-
-func BuildREMBData(senderSSRC uint32, bitrateBps uint64, ssrcs []uint32) REMBData {
-    return REMBData{SenderSSRC: senderSSRC, Bitrate: bitrateBps, SSRCs: ssrcs}
-}
-```
-
-### Step 2: Move Marshalling to Interceptor
-
-```go
-// pkg/bwe/interceptor/remb.go
-package interceptor
+// pkg/bwe/testutil/browser.go
+package testutil
 
 import (
-    "bwe/pkg/bwe"
-    "github.com/pion/rtcp"
+    "context"
+    "github.com/chromedp/chromedp"
 )
 
-func marshalREMB(data bwe.REMBData) ([]byte, error) {
-    pkt := &rtcp.ReceiverEstimatedMaximumBitrate{
-        SenderSSRC: data.SenderSSRC,
-        Bitrate:    float32(data.Bitrate),
-        SSRCs:      data.SSRCs,
-    }
-    return pkt.Marshal()
+// BrowserClient wraps chromedp for WebRTC testing
+type BrowserClient struct {
+    ctx    context.Context
+    cancel context.CancelFunc
 }
+
+// NewBrowserClient creates headless Chrome instance with WebRTC flags
+func NewBrowserClient() (*BrowserClient, error)
+
+// StartCall initiates WebRTC call to given server
+func (b *BrowserClient) StartCall(serverURL string) error
+
+// GetREMBStats retrieves REMB-related stats from webrtc-internals
+func (b *BrowserClient) GetREMBStats() (*REMBStats, error)
+
+// Close terminates browser
+func (b *BrowserClient) Close()
 ```
 
-### Step 3: Update Estimator API
+**Why testutil (not e2e):** Browser helpers are reusable infrastructure that could be used in future testing scenarios. Place utilities in `testutil/`, actual test files in `e2e/`.
+
+### Integration Point 2: cmd/chrome-interop Server
+
+**Current state:** Embedded HTML, hardcoded behavior, manual interaction only.
+
+**Extension:** Separate into reusable server with control API.
 
 ```go
-// pkg/bwe/bandwidth_estimator.go
-func (e *BandwidthEstimator) MaybeBuildREMB(now time.Time) (REMBData, bool, error) {
-    // Return struct instead of bytes
+// cmd/chrome-interop/server.go
+package main
+
+type TestServer struct {
+    pc       *webrtc.PeerConnection
+    bwe      *bweinterceptor.BWEInterceptor
+    stats    *Stats
+}
+
+// NewTestServer creates configurable test server
+func NewTestServer(opts ...ServerOption) *TestServer
+
+// Serve starts HTTP server on given address
+func (s *TestServer) Serve(addr string) error
+
+// GetEstimate returns current BWE estimate (for programmatic access)
+func (s *TestServer) GetEstimate() int64
+
+// GetREMBCount returns number of REMB packets sent
+func (s *TestServer) GetREMBCount() int
+```
+
+**Server as importable package:** Tests can import and control the server directly:
+```go
+// e2e/browser_test.go
+func TestChromeREMBAccepted(t *testing.T) {
+    server := chromeinterop.NewTestServer()
+    go server.Serve(":8080")
+    defer server.Close()
+
+    browser, _ := testutil.NewBrowserClient()
+    defer browser.Close()
+
+    browser.StartCall("http://localhost:8080")
+    time.Sleep(5 * time.Second)
+
+    stats, _ := browser.GetREMBStats()
+    assert.Greater(t, server.GetREMBCount(), 0)
+    assert.Greater(t, stats.ReceivedBitrate, 0)
 }
 ```
 
-### Step 4: Update Interceptor
+### Integration Point 3: Existing Test Patterns
+
+**Pattern: Build tags for E2E tests**
+
+The existing codebase uses `testing.Short()` for soak tests. E2E tests should use build tags:
 
 ```go
-// pkg/bwe/interceptor/interceptor.go
-func (i *Interceptor) maybeSendREMB(now time.Time) {
-    data, shouldSend, err := i.estimator.MaybeBuildREMB(now)
-    if err != nil || !shouldSend {
-        return
+// e2e/e2e_test.go
+//go:build e2e
+
+package e2e
+
+// All E2E tests in this package require:
+//   go test -tags e2e ./e2e/...
+```
+
+**Pattern: Table-driven tests with subtests**
+
+Existing tests use testify/require and t.Run extensively. E2E tests should follow:
+
+```go
+func TestNetworkConditions(t *testing.T) {
+    conditions := []struct {
+        name     string
+        loss     float64
+        latency  time.Duration
+        expected func(estimate int64) bool
+    }{
+        {"stable", 0, 10*time.Millisecond, func(e int64) bool { return e > 400000 }},
+        {"lossy", 0.05, 10*time.Millisecond, func(e int64) bool { return e < 400000 }},
+        {"high_latency", 0, 200*time.Millisecond, func(e int64) bool { return e > 0 }},
     }
 
-    // Marshal here
-    bytes, err := marshalREMB(data)
-    // ... send
+    for _, tc := range conditions {
+        t.Run(tc.name, func(t *testing.T) {
+            // Apply network condition
+            // Run test
+            // Assert
+        })
+    }
 }
 ```
 
-**Estimated effort:** 4-6 hours (modify 4 files, update all tests, verify behavior unchanged)
+## Patterns to Follow
 
-**Value proposition:** Theoretical purity, no practical benefit
+### Pattern 1: Chromedp for Browser Automation
 
-**Recommendation:** Don't do this. Status quo (Option B) is better.
+**What:** Use chromedp (pure Go Chrome DevTools Protocol client) for browser tests.
+
+**When:** Any test that needs real browser WebRTC behavior.
+
+**Why:**
+- Pure Go, no CGO, no external WebDriver
+- Direct Chrome DevTools Protocol access
+- Can query internal state (webrtc-internals equivalent)
+- Works in CI with headless Chrome
+
+**Example:**
+```go
+func startChromeWithWebRTC(ctx context.Context, url string) (context.Context, context.CancelFunc) {
+    opts := append(chromedp.DefaultExecAllocatorOptions[:],
+        chromedp.Flag("use-fake-ui-for-media-stream", true),
+        chromedp.Flag("use-fake-device-for-media-stream", true),
+        chromedp.Flag("allow-file-access-from-files", true),
+    )
+    allocCtx, cancel := chromedp.NewExecAllocator(ctx, opts...)
+    return chromedp.NewContext(allocCtx), cancel
+}
+```
+
+### Pattern 2: Docker-based Network Simulation
+
+**What:** Use Docker containers with tc/netem for network impairments.
+
+**When:** Testing BWE response to packet loss, bandwidth limits, latency/jitter.
+
+**Why:**
+- Isolated network namespace per test
+- Reproducible conditions
+- Works in CI (GitHub Actions supports Docker)
+- No host system modification required
+
+**Example docker-compose.yml:**
+```yaml
+version: "3.8"
+services:
+  bwe-server:
+    build: .
+    networks:
+      - impaired
+
+  network-shaper:
+    image: alpine
+    cap_add:
+      - NET_ADMIN
+    networks:
+      - impaired
+    command: >
+      sh -c "tc qdisc add dev eth0 root netem delay 100ms loss 5%"
+
+networks:
+  impaired:
+    driver: bridge
+```
+
+### Pattern 3: Pion-to-Pion Integration Tests
+
+**What:** Full PeerConnection tests without browser (Pion as both endpoints).
+
+**When:** Testing interceptor integration, REMB flow, multi-stream scenarios.
+
+**Why:**
+- Faster than browser tests
+- More control over timing and packets
+- Can verify internal state directly
+- No browser flakiness
+
+**Example (extends existing integration_test.go pattern):**
+```go
+func TestPeerConnection_REMBFlow(t *testing.T) {
+    // Sender peer (with video track)
+    sender, _ := webrtc.NewPeerConnection(config)
+    track, _ := webrtc.NewTrackLocalStaticRTP(...)
+    sender.AddTrack(track)
+
+    // Receiver peer (with BWE interceptor)
+    bweFactory, _ := bweinterceptor.NewBWEInterceptorFactory()
+    registry := &interceptor.Registry{}
+    registry.Add(bweFactory)
+    api := webrtc.NewAPI(webrtc.WithInterceptorRegistry(registry))
+    receiver, _ := api.NewPeerConnection(config)
+
+    // Connect peers (SDP exchange)
+    offer, _ := sender.CreateOffer(nil)
+    sender.SetLocalDescription(offer)
+    receiver.SetRemoteDescription(offer)
+    answer, _ := receiver.CreateAnswer(nil)
+    receiver.SetLocalDescription(answer)
+    sender.SetRemoteDescription(answer)
+
+    // Wait for connection + REMB
+    time.Sleep(5 * time.Second)
+
+    // Assert REMB sent
+    // ...
+}
+```
+
+## Anti-Patterns to Avoid
+
+### Anti-Pattern 1: Browser Tests for Algorithm Verification
+
+**What:** Using browser tests to verify BWE algorithm correctness.
+
+**Why bad:** Slow, flaky, hard to control conditions precisely.
+
+**Instead:** Use unit tests with MockClock and synthetic traces for algorithm testing. Reserve browser tests only for interop verification (REMB accepted by Chrome).
+
+### Anti-Pattern 2: Host Network Modification
+
+**What:** Using tc/netem directly on the CI host network.
+
+**Why bad:** Affects all network traffic, requires root, hard to clean up on failure.
+
+**Instead:** Use Docker containers with isolated network namespaces.
+
+### Anti-Pattern 3: Hardcoded Timing in E2E Tests
+
+**What:** Using fixed `time.Sleep()` for synchronization.
+
+**Why bad:** Flaky on slow CI machines, wastes time on fast machines.
+
+**Instead:** Use polling with timeout:
+```go
+require.Eventually(t, func() bool {
+    return server.GetREMBCount() > 0
+}, 10*time.Second, 100*time.Millisecond)
+```
+
+### Anti-Pattern 4: E2E Tests in Main Test Suite
+
+**What:** Running browser/network tests with regular `go test ./...`.
+
+**Why bad:** Slow, requires Chrome, may require Docker, breaks normal development flow.
+
+**Instead:** Use build tags (`//go:build e2e`) and separate CI workflow.
+
+## Suggested Build Order
+
+### Phase 1: Test Infrastructure Foundation
+
+**Goal:** Create E2E directory structure and basic browser automation.
+
+**Tasks:**
+1. Create `e2e/` directory with build-tagged test file
+2. Add `chromedp` dependency
+3. Create `pkg/bwe/testutil/browser.go` with BrowserClient
+4. Refactor `cmd/chrome-interop/` into importable server package
+5. Create first browser test: `TestChrome_CanConnect`
+
+**Dependencies:** None (extends existing code)
+
+**Validation:** `go test -tags e2e ./e2e/...` passes with Chrome installed
+
+### Phase 2: Chrome REMB Verification (VALID-02 Automation)
+
+**Goal:** Automate the current manual Chrome interop test.
+
+**Tasks:**
+1. Extend BrowserClient with `GetREMBStats()` (via JS injection or CDP)
+2. Create `e2e/browser_test.go` with REMB verification test
+3. Add assertion: REMB visible in Chrome stats
+4. Add test: estimate converges to reasonable value
+
+**Dependencies:** Phase 1 complete
+
+**Validation:** `TestChrome_REMBAccepted` passes headlessly
+
+### Phase 3: Network Simulation Infrastructure
+
+**Goal:** Add network condition simulation capability.
+
+**Tasks:**
+1. Create `pkg/bwe/testutil/network.go` with condition helpers
+2. Create `e2e/docker/` with network simulation containers
+3. Create `e2e/network_test.go` with condition tests
+4. Test scenarios: stable, lossy, bandwidth-limited, high-latency
+
+**Dependencies:** Docker knowledge, Phase 1 complete
+
+**Validation:** BWE estimate responds appropriately to conditions
+
+### Phase 4: Full PeerConnection Tests
+
+**Goal:** Comprehensive Pion-to-Pion integration tests.
+
+**Tasks:**
+1. Create `e2e/peerconnection_test.go`
+2. Test scenarios: single stream, multi-stream, stream add/remove
+3. Verify REMB SSRCs match active streams
+4. Verify estimate stability over time
+
+**Dependencies:** Phase 1 complete (can run parallel with Phase 2-3)
+
+**Validation:** All PeerConnection scenarios pass
+
+### Phase 5: CI Integration
+
+**Goal:** Automated E2E testing in GitHub Actions.
+
+**Tasks:**
+1. Create `.github/workflows/e2e.yml`
+2. Configure headless Chrome in CI
+3. Configure Docker for network simulation
+4. Add workflow triggers (PR, nightly)
+5. Add status badges to README
+
+**Dependencies:** All previous phases
+
+**Validation:** CI runs E2E tests automatically
+
+## CI Workflow Structure
+
+### Recommended Workflow Design
+
+```yaml
+# .github/workflows/e2e.yml
+name: E2E Tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    - cron: '0 0 * * *'  # Nightly
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - run: go test ./...
+
+  browser-tests:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+      - name: Install Chrome
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser
+      - name: Run browser tests
+        run: |
+          export CHROME_PATH=/usr/bin/chromium-browser
+          go test -tags e2e -v ./e2e/... -run TestChrome
+
+  network-tests:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+      - name: Run network simulation tests
+        run: |
+          docker-compose -f e2e/docker/docker-compose.yml up -d
+          go test -tags e2e -v ./e2e/... -run TestNetwork
+          docker-compose -f e2e/docker/docker-compose.yml down
+
+  peerconnection-tests:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+      - run: go test -tags e2e -v ./e2e/... -run TestPeerConnection
+
+  soak-tests:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'  # Nightly only
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+      - run: go test -v ./pkg/bwe/... -run TestSoak24Hour
+```
+
+### Workflow Separation Rationale
+
+| Job | Trigger | Duration | Why Separate |
+|-----|---------|----------|--------------|
+| unit-tests | Always | ~30s | Fast feedback, blocks others |
+| browser-tests | Always | ~2min | Needs Chrome, can fail independently |
+| network-tests | Always | ~3min | Needs Docker, can fail independently |
+| peerconnection-tests | Always | ~1min | Pure Go, reliable |
+| soak-tests | Nightly | ~5min | Long running, not blocking |
+
+## Scalability Considerations
+
+| Concern | Current (few tests) | At 20 E2E tests | At 100 E2E tests |
+|---------|---------------------|-----------------|------------------|
+| Test duration | 1-2 minutes | 5-10 minutes | Parallelize by job |
+| Chrome instances | 1 headless | 1 per test file | Pool/reuse |
+| Docker containers | On-demand | Cached images | Pre-built images |
+| CI cost | Minimal | ~10min/run | Optimize with matrix |
 
 ## Sources
 
-**Go Architecture Patterns:**
-- [Managing dependencies - The Go Programming Language](https://go.dev/doc/modules/managing-dependencies)
-- [Standard Go Project Layout](https://github.com/golang-standards/project-layout)
-- [Organizing a Go module](https://go.dev/doc/modules/layout)
+### Primary (HIGH confidence)
 
-**Clean Architecture & Hexagonal Design:**
-- [Clean Architecture in Go: A Practical Guide](https://threedots.tech/post/introducing-clean-architecture/)
-- [Hexagonal Architecture in Go](https://skoredin.pro/blog/golang/hexagonal-architecture-go)
-- [Pragmatic Clean Architecture](https://blog.codewithram.dev/blog/clean-architecture-developer-journey.html)
-- [DDD, Hexagonal, Onion, Clean, CQRS Combined](https://herbertograca.com/2017/11/16/explicit-architecture-01-ddd-hexagonal-onion-clean-cqrs-how-i-put-it-all-together/)
+**Codebase analysis:**
+- `/Users/thesyncim/GolandProjects/bwe/pkg/bwe/interceptor/integration_test.go` - Existing integration test patterns
+- `/Users/thesyncim/GolandProjects/bwe/pkg/bwe/testutil/` - Existing test utilities
+- `/Users/thesyncim/GolandProjects/bwe/pkg/bwe/soak_test.go` - Long-running test patterns
+- `/Users/thesyncim/GolandProjects/bwe/cmd/chrome-interop/main.go` - Current manual test server
 
-**Pion Architecture:**
-- [Pion WebRTC Big Ideas](https://github.com/pion/webrtc/wiki/Big-Ideas)
-- [Interceptors Design Discussion](https://github.com/pion/webrtc-v3-design/issues/34)
-- [pion/interceptor Package Documentation](https://pkg.go.dev/github.com/pion/interceptor)
+**Go testing patterns:**
+- [testing package - Go Packages](https://pkg.go.dev/testing)
+- [Go Unit Testing: Structure & Best Practices](https://www.glukhov.org/post/2025/11/unit-tests-in-go/)
+- [Mastering Golang Testing: Integration, Unit, and E2E](https://martinyonathann.medium.com/integration-unit-and-e2e-testing-in-golang-3e957f9920dd)
 
-**Project History:**
-- `.planning/phases/02-rate-control-remb/02-03-PLAN.md` - Original REMB builder plan
-- `.planning/PROJECT.md` - Project context and key decisions
-- `.planning/research/ARCHITECTURE.md` (v1.0) - Original architecture design
+**Browser automation:**
+- [chromedp package - Go Packages](https://pkg.go.dev/github.com/chromedp/chromedp)
+- [ChromeDP Tutorial - Rebrowser](https://rebrowser.net/blog/chromedp-tutorial-master-browser-automation-in-go-with-real-world-examples-and-best-practices)
+- [Running UI Automation Tests with Go and Chrome on GitHub Actions](https://pradappandiyan.medium.com/running-ui-automation-tests-with-go-and-chrome-on-github-actions-1f56d7c63405)
 
-## Conclusion
+### Secondary (MEDIUM confidence)
 
-**Recommendation: Option B - Relax boundary pragmatically.**
+**WebRTC testing:**
+- [Testing WebRTC applications - webrtc.org](https://webrtc.org/getting-started/testing)
+- [Peer connection interop testing - Pion Discussion](https://github.com/pion/webrtc/discussions/1668)
+- [KITE - WebRTC interoperability testing](https://github.com/webrtc/KITE)
 
-The boundary was already crossed in Phase 2 when we added `pion/rtcp` to core for REMB marshalling. This was the right decision then, and it remains the right decision now.
+**Network simulation:**
+- [webrtcperf - WebRTC performance testing](https://github.com/vpalmisano/webrtcperf)
+- [Testing WebRTC in constrained networks](https://medium.com/@vpalmisano/testing-webrtc-clients-in-constrained-network-environments-b34fed6d9d1c)
+- [slow-network - tc/netem wrapper](https://github.com/j1elo/slow-network)
 
-**Guiding principle:**
-> Accept domain-level dependencies (`pion/rtcp`, `pion/rtp`), reject infrastructure-level dependencies (`pion/interceptor`, `pion/webrtc`).
+**CI patterns:**
+- [Run headless test with GitHub Actions](https://remarkablemark.org/blog/2020/12/12/headless-test-in-github-actions-workflow/)
+- [docker-webrtc-test - Headless browser Docker setup](https://github.com/relekang/docker-webrtc-test)
 
-**What this means for v1.1 milestone:**
-- Keep REMB marshalling in core (status quo)
-- Feel free to use Pion types where they improve type safety and reduce maintenance
-- Keep algorithm logic pure (InterArrival, Kalman, AIMD)
-- Keep integration logic in interceptor layer
-
-**Files to modify:** Likely ZERO. Current architecture already follows this principle.
-
-**Next steps:**
-1. Review this research with team
-2. Update PROJECT.md to reflect "domain dependencies acceptable" principle
-3. Proceed with v1.1 refactoring using Pion types confidently
+---
+**Research completed:** 2026-01-22
+**Ready for roadmap:** Yes
