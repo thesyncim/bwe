@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 3 of 4 (Pion Integration)
-Plan: 1 of 6 in current phase
+Plan: 2 of 6 in current phase
 Status: In progress
-Last activity: 2026-01-22 - Completed 03-01-PLAN.md (Interceptor setup)
+Last activity: 2026-01-22 - Completed 03-02-PLAN.md (Core interceptor implementation)
 
-Progress: [█████████████░░░░░░░░░░] 57% (13/23 plans)
+Progress: [██████████████░░░░░░░░░] 61% (14/23 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 13
-- Average duration: 3.5 min
-- Total execution time: 46 min
+- Total plans completed: 14
+- Average duration: 3.6 min
+- Total execution time: 50 min
 
 **By Phase:**
 
@@ -29,12 +29,12 @@ Progress: [█████████████░░░░░░░░░░
 |-------|-------|-------|----------|
 | 1. Foundation | 6/6 | 23 min | 3.8 min |
 | 2. Rate Control | 6/6 | 20 min | 3.3 min |
-| 3. Pion Integration | 1/6 | 3 min | 3.0 min |
+| 3. Pion Integration | 2/6 | 7 min | 3.5 min |
 | 4. Validation | 0/5 | - | - |
 
 **Recent Trend:**
-- Last 6 plans: 02-02 (~2 min), 02-03 (5 min), 02-04 (2 min), 02-05 (3 min), 02-06 (7 min), 03-01 (3 min)
-- Trend: Phase 3 started with setup plan complete
+- Last 6 plans: 02-03 (5 min), 02-04 (2 min), 02-05 (3 min), 02-06 (7 min), 03-01 (3 min), 03-02 (4 min)
+- Trend: Phase 3 progressing well with core interceptor complete
 
 *Updated after each plan completion*
 
@@ -71,9 +71,13 @@ Recent decisions affecting current work:
 - **[02-06]** REMB scheduler is optional via SetREMBScheduler
 - **[02-06]** MaybeBuildREMB includes all tracked SSRCs in REMB packet
 - **[02-06]** lastPacketTime tracking for REMB scheduling convenience
-- **[NEW 03-01]** Extension ID 0 means "not found" - callers must handle gracefully
-- **[NEW 03-01]** atomic.Value for lastPacketTime enables thread-safe concurrent access
-- **[NEW 03-01]** Unexported streamState type - internal implementation detail
+- **[03-01]** Extension ID 0 means "not found" - callers must handle gracefully
+- **[03-01]** atomic.Value for lastPacketTime enables thread-safe concurrent access
+- **[03-01]** Unexported streamState type - internal implementation detail
+- **[NEW 03-02]** First stream to provide extension ID wins (CompareAndSwap)
+- **[NEW 03-02]** abs-send-time preferred over abs-capture-time when both available
+- **[NEW 03-02]** Packets without timing extensions silently skipped
+- **[NEW 03-02]** Stream state updated on every packet for timeout detection
 
 ### Pending Todos
 
@@ -85,15 +89,15 @@ None - Phase 3 in progress.
 
 ## Session Continuity
 
-Last session: 2026-01-22T17:58:00Z
-Stopped at: Completed 03-01-PLAN.md (Interceptor setup)
+Last session: 2026-01-22T18:04:00Z
+Stopped at: Completed 03-02-PLAN.md (Core interceptor implementation)
 Resume file: None
 
 ---
 
 ## Quick Reference
 
-**Next action:** `/gsd:execute-plan 03-02` (Core interceptor implementation)
+**Next action:** `/gsd:execute-plan 03-03` (Factory and options)
 
 **Phase 1 COMPLETE:**
 - Delay measurement with timestamp parsing [COMPLETED in 01-01]
@@ -113,8 +117,8 @@ Resume file: None
 
 **Phase 3 IN PROGRESS:**
 - Interceptor setup with extension helpers [COMPLETED in 03-01]
-- Core interceptor implementation [NEXT: 03-02]
-- Factory and options [03-03]
+- Core interceptor implementation [COMPLETED in 03-02]
+- Factory and options [NEXT: 03-03]
 - RTP processing [03-04]
 - REMB sending [03-05]
 - Integration tests [03-06]
@@ -148,6 +152,10 @@ Resume file: None
 - `FindExtensionID(exts, uri)` - Extension ID lookup
 - `FindAbsSendTimeID(exts)`, `FindAbsCaptureTimeID(exts)` - Convenience functions
 - `streamState` (unexported) - Per-stream state tracking
+- `BWEInterceptor` - Main interceptor type embedding NoOp
+- `NewBWEInterceptor(estimator, opts...)` - Constructor with options
+- `BindRemoteStream(info, reader)` - Wraps RTPReader for packet observation
+- `WithREMBInterval(d)`, `WithSenderSSRC(ssrc)` - Configuration options
 
 **Critical pitfalls handled in Phase 1:**
 - Adaptive threshold required (static causes TCP starvation) [HANDLED]
