@@ -36,24 +36,24 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Rate Control
 
-- [ ] **RATE-01**: Implement AIMD rate controller (3-state FSM: Increase/Decrease/Hold)
-- [ ] **RATE-02**: Implement multiplicative decrease (0.85x) on overuse signal
-- [ ] **RATE-03**: Implement sliding window incoming bitrate measurement
-- [ ] **RATE-04**: Support configurable AIMD parameters (decrease factor, increase rate)
+- [x] **RATE-01**: Implement AIMD rate controller (3-state FSM: Increase/Decrease/Hold)
+- [x] **RATE-02**: Implement multiplicative decrease (0.85x) on overuse signal
+- [x] **RATE-03**: Implement sliding window incoming bitrate measurement
+- [x] **RATE-04**: Support configurable AIMD parameters (decrease factor, increase rate)
 
 ### REMB Output
 
-- [ ] **REMB-01**: Generate spec-compliant REMB RTCP packets (PT=206, FMT=15)
-- [ ] **REMB-02**: Encode bitrate correctly using mantissa+exponent format
-- [ ] **REMB-03**: Support configurable REMB send interval (default 1Hz)
-- [ ] **REMB-04**: Send REMB immediately on significant bandwidth decrease (>=3%)
+- [x] **REMB-01**: Generate spec-compliant REMB RTCP packets (PT=206, FMT=15)
+- [x] **REMB-02**: Encode bitrate correctly using mantissa+exponent format
+- [x] **REMB-03**: Support configurable REMB send interval (default 1Hz)
+- [x] **REMB-04**: Send REMB immediately on significant bandwidth decrease (>=3%)
 
 ### Core Library
 
-- [ ] **CORE-01**: Implement standalone Estimator API with no Pion dependencies
-- [ ] **CORE-02**: Provide OnPacket() method accepting arrival time, send time, payload size, SSRC
-- [ ] **CORE-03**: Provide GetEstimate() method returning bandwidth in bits per second
-- [ ] **CORE-04**: Support multiple concurrent SSRCs with aggregated estimation
+- [x] **CORE-01**: Implement standalone Estimator API with no Pion dependencies
+- [x] **CORE-02**: Provide OnPacket() method accepting arrival time, send time, payload size, SSRC
+- [x] **CORE-03**: Provide GetEstimate() method returning bandwidth in bits per second
+- [x] **CORE-04**: Support multiple concurrent SSRCs with aggregated estimation
 
 ### Pion Integration
 

@@ -13,7 +13,7 @@ This roadmap delivers a Go port of libwebrtc's GCC delay-based receiver-side ban
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundation & Core Pipeline** - Delay measurement, filtering, and congestion detection
-- [ ] **Phase 2: Rate Control & REMB** - AIMD rate control, REMB output, and core API
+- [x] **Phase 2: Rate Control & REMB** - AIMD rate control, REMB output, and core API
 - [ ] **Phase 3: Pion Integration** - Interceptor implementation and extension parsing
 - [ ] **Phase 4: Optimization & Validation** - Performance tuning and Chrome interoperability
 
@@ -64,12 +64,12 @@ Plans:
 **Plans**: 6 plans in 4 waves
 
 Plans:
-- [ ] 02-01-PLAN.md — Sliding window bitrate measurement (RATE-03)
-- [ ] 02-02-PLAN.md — AIMD rate controller state machine (RATE-01, RATE-02, RATE-04)
-- [ ] 02-03-PLAN.md — REMB packet builder using pion/rtcp (REMB-01, REMB-02)
-- [ ] 02-04-PLAN.md — REMB scheduler with immediate decrease (REMB-03, REMB-04)
-- [ ] 02-05-PLAN.md — Standalone BandwidthEstimator API (CORE-01, CORE-02, CORE-03)
-- [ ] 02-06-PLAN.md — Multi-SSRC support and integration tests (CORE-04)
+- [x] 02-01-PLAN.md — Sliding window bitrate measurement (RATE-03)
+- [x] 02-02-PLAN.md — AIMD rate controller state machine (RATE-01, RATE-02, RATE-04)
+- [x] 02-03-PLAN.md — REMB packet builder using pion/rtcp (REMB-01, REMB-02)
+- [x] 02-04-PLAN.md — REMB scheduler with immediate decrease (REMB-03, REMB-04)
+- [x] 02-05-PLAN.md — Standalone BandwidthEstimator API (CORE-01, CORE-02, CORE-03)
+- [x] 02-06-PLAN.md — Multi-SSRC support and integration tests (CORE-04)
 
 ---
 
@@ -134,8 +134,8 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation & Core Pipeline | 6/6 | Complete | 2026-01-22 |
-| 2. Rate Control & REMB | 0/6 | Ready | - |
-| 3. Pion Integration | 0/6 | Not started | - |
+| 2. Rate Control & REMB | 6/6 | Complete | 2026-01-22 |
+| 3. Pion Integration | 0/6 | Ready | - |
 | 4. Optimization & Validation | 0/5 | Not started | - |
 
 ---
@@ -161,4 +161,4 @@ All 39 v1 requirements mapped to exactly one phase:
 ---
 
 *Roadmap created: 2026-01-22*
-*Last updated: 2026-01-22 after Phase 2 planning*
+*Last updated: 2026-01-22 after Phase 2 completion*
