@@ -70,15 +70,16 @@ func DefaultOveruseConfig() OveruseConfig {
 //   - Signal suppression when gradient is decreasing
 //   - State change callbacks for application notification
 type OveruseDetector struct {
-	config         OveruseConfig
-	clock          internal.Clock
-	threshold      float64           // Current adaptive threshold
-	lastUpdateTime time.Time         // For threshold adaptation timing
-	overuseStart   time.Time         // When current overuse period started
-	overuseCounter int               // Consecutive overuse detections
-	prevEstimate   float64           // Previous estimate for suppression check
-	hypothesis     BandwidthUsage    // Current state
-	callback       StateChangeCallback
+	config           OveruseConfig
+	clock            internal.Clock
+	threshold        float64            // Current adaptive threshold
+	lastUpdateTime   time.Time          // For threshold adaptation timing
+	overuseStart     time.Time          // When current overuse period started
+	overuseCounter   int                // Consecutive overuse detections
+	inOveruseRegion  bool               // Whether we're tracking potential overuse
+	prevEstimate     float64            // Previous estimate for suppression check
+	hypothesis       BandwidthUsage     // Current state
+	callback         StateChangeCallback
 }
 
 // NewOveruseDetector creates a new OveruseDetector with the given configuration
@@ -157,11 +158,12 @@ func (d *OveruseDetector) Detect(estimate float64) BandwidthUsage {
 	oldHypothesis := d.hypothesis
 
 	if estimate > d.threshold {
-		// Potential overuse
-		if d.hypothesis != BwOverusing {
+		// Potential overuse - track if we're entering the overuse region
+		if !d.inOveruseRegion {
 			// Start tracking overuse period
 			d.overuseStart = now
 			d.overuseCounter = 0
+			d.inOveruseRegion = true
 		}
 		d.overuseCounter++
 
@@ -175,9 +177,11 @@ func (d *OveruseDetector) Detect(estimate float64) BandwidthUsage {
 	} else if estimate < -d.threshold {
 		// Underuse (negative delay = queue draining fast)
 		d.hypothesis = BwUnderusing
+		d.inOveruseRegion = false
 	} else {
 		// Normal operation
 		d.hypothesis = BwNormal
+		d.inOveruseRegion = false
 	}
 
 	d.prevEstimate = estimate
@@ -210,6 +214,7 @@ func (d *OveruseDetector) Reset() {
 	d.hypothesis = BwNormal
 	d.overuseStart = time.Time{}
 	d.overuseCounter = 0
+	d.inOveruseRegion = false
 	d.prevEstimate = 0
 	d.lastUpdateTime = time.Time{}
 }
