@@ -99,6 +99,9 @@ Recent decisions affecting current work:
 - **[NEW 04-03]** Three-phase TCP fairness methodology: 30s stable, 60s congested, 30s recovery
 - **[NEW 04-03]** Fair share thresholds: 10% min (no starvation), 90% max (appropriate backoff)
 - **[NEW 04-03]** Sustained congestion test runs 5+ simulated minutes to detect gradual starvation
+- **[NEW 04-01]** Core estimator 0 allocs/op is the target; interceptor 1-2 allocs/op acceptable
+- **[NEW 04-01]** atomic.Value.Store(time.Time) causes 1 alloc due to interface boxing
+- **[NEW 04-01]** Future optimization: Replace atomic.Value with atomic.Int64 for lastPacketTime
 
 ### Pending Todos
 
@@ -223,9 +226,12 @@ All 7 Phase 3 requirements verified in TestPhase3_RequirementsVerification:
 - PERF-02: Use sync.Pool for packet metadata structures
 
 **Phase 4 Validation Progress:**
-- 04-01: Performance benchmarks and PERF-01 validation [COMPLETED]
-  - Allocation benchmarks for core estimator and interceptor
-  - Escape analysis documentation for hot path optimization
+- 04-01: Performance benchmarks and PERF-01 validation [COMPLETED - 2026-01-22]
+  - Allocation benchmarks: 10 for core estimator, 6 for interceptor
+  - Core estimator: 0 allocs/op (PERF-01 MET)
+  - Interceptor: 2 allocs/op (atomic.Value + sync.Map - acceptable overhead)
+  - Escape analysis documented in benchmark_test.go files
+  - Key: atomic.Value.Store(time.Time) causes 1 alloc (interface boxing)
 - 04-02: Reference trace validation infrastructure [COMPLETED]
   - ReferenceTrace, TracedPacket, LoadTrace, Replay functions
   - CalculateDivergence for VALID-01 comparison
