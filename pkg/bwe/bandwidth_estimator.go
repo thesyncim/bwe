@@ -3,6 +3,8 @@
 package bwe
 
 import (
+	"time"
+
 	"bwe/pkg/bwe/internal"
 )
 
@@ -44,6 +46,12 @@ type BandwidthEstimator struct {
 	// Current state
 	estimate int64
 	ssrcs    map[uint32]struct{} // Track seen SSRCs
+
+	// REMB scheduling (optional, set via SetREMBScheduler)
+	rembScheduler *REMBScheduler
+
+	// Track last packet time for REMB scheduling convenience
+	lastPacketTime time.Time
 }
 
 // NewBandwidthEstimator creates a new bandwidth estimator.
@@ -92,6 +100,9 @@ func (e *BandwidthEstimator) OnPacket(pkt PacketInfo) int64 {
 	// Update rate controller with signal and incoming rate
 	e.estimate = e.rateController.Update(signal, incomingRate, pkt.ArrivalTime)
 
+	// Track last packet time for REMB scheduling
+	e.lastPacketTime = pkt.ArrivalTime
+
 	return e.estimate
 }
 
@@ -135,4 +146,41 @@ func (e *BandwidthEstimator) Reset() {
 	e.rateController.Reset()
 	e.estimate = e.config.RateControllerConfig.InitialBitrate
 	e.ssrcs = make(map[uint32]struct{})
+	e.lastPacketTime = time.Time{}
+	// Note: We don't reset the REMB scheduler here, as it's externally provided.
+	// The caller can reset it separately if needed.
+}
+
+// SetREMBScheduler attaches a REMB scheduler to the estimator.
+// Once attached, MaybeBuildREMB can be used to generate REMB packets.
+func (e *BandwidthEstimator) SetREMBScheduler(scheduler *REMBScheduler) {
+	e.rembScheduler = scheduler
+}
+
+// MaybeBuildREMB checks if a REMB packet should be sent and builds it.
+// Returns (packet, true, nil) if REMB should be sent.
+// Returns (nil, false, nil) if no REMB needed now.
+// Returns (nil, false, error) if encoding fails.
+//
+// This should be called after OnPacket() or periodically.
+//
+// Multi-SSRC: The REMB packet includes ALL SSRCs seen by this estimator,
+// as receiver-side estimation produces ONE estimate for the entire session.
+func (e *BandwidthEstimator) MaybeBuildREMB(now time.Time) ([]byte, bool, error) {
+	if e.rembScheduler == nil {
+		return nil, false, nil // No scheduler, no REMB
+	}
+
+	ssrcs := e.GetSSRCs()
+	if len(ssrcs) == 0 {
+		return nil, false, nil // No SSRCs seen yet
+	}
+
+	return e.rembScheduler.MaybeSendREMB(e.estimate, ssrcs, now)
+}
+
+// GetLastPacketTime returns the arrival time of the last processed packet.
+// Useful for REMB scheduling when calling MaybeBuildREMB.
+func (e *BandwidthEstimator) GetLastPacketTime() time.Time {
+	return e.lastPacketTime
 }
