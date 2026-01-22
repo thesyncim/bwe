@@ -1,6 +1,6 @@
 .idea
 .goland-state.json
 
-# Compiled binaries
-chrome-interop
-soak
+# Compiled binaries (in root directory)
+/chrome-interop
+/soak
