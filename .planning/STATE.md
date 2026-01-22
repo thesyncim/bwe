@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 5 - Pion Type Adoption
-Plan: 01 of 3 completed
+Plan: 02 of 3 completed
 Status: In progress
-Last activity: 2026-01-22 - Completed 05-01-PLAN.md (Pion extension parsing)
+Last activity: 2026-01-22 - Completed 05-02-PLAN.md (Deprecation comments)
 
-Progress: [████████████████████████▒] 81% (v1.0 complete, v1.1 plan 1/3)
+Progress: [█████████████████████████▒] 85% (v1.0 complete, v1.1 plan 2/3)
 
 ## Performance Metrics
 
@@ -118,6 +118,8 @@ Recent decisions affecting current work:
 - **[05-01]** Stack allocation via var ext Type (not new()) for 0 allocs/op
 - **[05-01]** Cast uint64 to uint32 for abs-send-time (24-bit fits safely)
 - **[05-01]** Retain UQ32.32 to 6.18 conversion logic (KEEP-03)
+- **[05-02]** v1.2 removal timeline for deprecated functions: signals stability
+- **[05-02]** Migration examples in deprecation comments for clear migration path
 
 ### Pending Todos
 
@@ -130,7 +132,7 @@ None - v1.0 complete, v1.1 roadmap ready for planning.
 ## Session Continuity
 
 Last session: 2026-01-22
-Stopped at: Completed 05-01-PLAN.md (Pion extension parsing in interceptor)
+Stopped at: Completed 05-02-PLAN.md (Deprecation comments for parse functions)
 Resume file: None
 
 ---
@@ -167,12 +169,12 @@ Resume file: None
 **v1.1 CURRENT (Phase 5):**
 - Use pion/rtp.AbsSendTimeExtension (EXT-01) [COMPLETED in 05-01]
 - Use pion/rtp.AbsCaptureTimeExtension (EXT-02) [COMPLETED in 05-01]
-- Remove custom ParseAbsSendTime() (EXT-03)
-- Remove custom ParseAbsCaptureTime() (EXT-04)
-- Retain UnwrapAbsSendTime() (KEEP-01)
+- Deprecate custom ParseAbsSendTime() (EXT-03) [COMPLETED in 05-02]
+- Deprecate custom ParseAbsCaptureTime() (EXT-04) [COMPLETED in 05-02]
+- Retain UnwrapAbsSendTime() (KEEP-01) [VERIFIED in 05-02]
 - Retain FindExtensionID() helpers (KEEP-02)
 - Retain custom inter-group delay calculation (KEEP-03) [VERIFIED in 05-01]
-- All existing tests pass (VAL-01) [VERIFIED in 05-01]
+- All existing tests pass (VAL-01) [VERIFIED in 05-01, 05-02]
 - No allocation regression (VAL-02)
 - 24-hour soak test passes (VAL-03)
 - Chrome interop still works (VAL-04)
@@ -302,9 +304,9 @@ All validation requirements verified:
 | Plan | Name | Status | Duration |
 |------|------|--------|----------|
 | 05-01 | Pion extension parsing | COMPLETE | 2 min |
-| 05-02 | Remove custom parsing | Pending | - |
+| 05-02 | Deprecation comments | COMPLETE | 2 min |
 | 05-03 | Validation | Pending | - |
 
 ---
 
-*Last updated: 2026-01-22 - Completed 05-01-PLAN.md*
+*Last updated: 2026-01-22 - Completed 05-02-PLAN.md*
