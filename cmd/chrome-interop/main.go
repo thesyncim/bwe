@@ -300,6 +300,17 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Register abs-send-time header extension for BWE
+	// This MUST be registered before creating the PeerConnection so it's included in SDP negotiation.
+	// Chrome will then include abs-send-time in RTP packets, which our BWE interceptor needs.
+	if err := m.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{
+		URI: "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time",
+	}, webrtc.RTPCodecTypeVideo); err != nil {
+		log.Printf("Failed to register abs-send-time extension: %v", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
 	// Create interceptor registry
 	i := &interceptor.Registry{}
 
@@ -367,6 +378,13 @@ func handleOffer(w http.ResponseWriter, r *http.Request) {
 	// Log when we receive video track
 	peerConnection.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		log.Printf("Received video track: codec=%s, ssrc=%d", track.Codec().MimeType, track.SSRC())
+
+		// Log header extensions available (for debugging BWE setup)
+		params := receiver.GetParameters()
+		log.Printf("Header extensions for track:")
+		for _, ext := range params.HeaderExtensions {
+			log.Printf("  - ID=%d, URI=%s", ext.ID, ext.URI)
+		}
 
 		// Read packets to keep the stream alive and feed BWE
 		go func() {
