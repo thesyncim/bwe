@@ -147,7 +147,12 @@ Plans:
   6. 24-hour accelerated soak test passes (timestamp wraparound handling preserved)
   7. Chrome interop still works (REMB packets accepted, visible in webrtc-internals)
 
-**Plans**: TBD during planning
+**Plans**: 3 plans in 3 waves
+
+Plans:
+- [ ] 05-01-PLAN.md — Adopt Pion extension types in interceptor processRTP (EXT-01, EXT-02)
+- [ ] 05-02-PLAN.md — Deprecate custom parsing functions (EXT-03, EXT-04)
+- [ ] 05-03-PLAN.md — Full validation suite (VAL-01, VAL-02, VAL-03, VAL-04, KEEP-01, KEEP-02, KEEP-03)
 
 ---
 
@@ -162,11 +167,11 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 2. Rate Control & REMB | 6/6 | Complete | 2026-01-22 |
 | 3. Pion Integration | 6/6 | Complete | 2026-01-22 |
 | 4. Optimization & Validation | 5/5 | Complete | 2026-01-22 |
-| 5. Pion Type Adoption | 0/? | Not started | — |
+| 5. Pion Type Adoption | 0/3 | Ready | — |
 
 **v1.0 MILESTONE COMPLETE** - All 23 plans across 4 phases executed successfully (2026-01-22).
 
-**v1.1 MILESTONE** - Phase 5 planning in progress.
+**v1.1 MILESTONE** - Phase 5 planned (3 plans in 3 waves). Ready for execution.
 
 ---
 
@@ -202,4 +207,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 ---
 
 *Roadmap created: 2026-01-22*
-*Last updated: 2026-01-22 - v1.1 roadmap added (Phase 5)*
+*Last updated: 2026-01-22 - Phase 5 planned (3 plans)*
