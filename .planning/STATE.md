@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 3 of 4 (Pion Integration)
-Plan: 3 of 6 in current phase
+Plan: 4 of 6 in current phase
 Status: In progress
-Last activity: 2026-01-22 - Completed 03-03-PLAN.md (BindRTCPWriter and REMB Loop)
+Last activity: 2026-01-22 - Completed 03-04-PLAN.md (Stream timeout and cleanup)
 
-Progress: [███████████████░░░░░░░░] 65% (15/23 plans)
+Progress: [████████████████░░░░░░░] 70% (16/23 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 15
+- Total plans completed: 16
 - Average duration: 3.7 min
-- Total execution time: 55 min
+- Total execution time: 59 min
 
 **By Phase:**
 
@@ -29,12 +29,12 @@ Progress: [███████████████░░░░░░░░
 |-------|-------|-------|----------|
 | 1. Foundation | 6/6 | 23 min | 3.8 min |
 | 2. Rate Control | 6/6 | 20 min | 3.3 min |
-| 3. Pion Integration | 3/6 | 12 min | 4.0 min |
+| 3. Pion Integration | 4/6 | 16 min | 4.0 min |
 | 4. Validation | 0/5 | - | - |
 
 **Recent Trend:**
-- Last 6 plans: 02-04 (2 min), 02-05 (3 min), 02-06 (7 min), 03-01 (3 min), 03-02 (4 min), 03-03 (5 min)
-- Trend: Phase 3 progressing well with REMB sending complete
+- Last 6 plans: 02-05 (3 min), 02-06 (7 min), 03-01 (3 min), 03-02 (4 min), 03-03 (5 min), 03-04 (4 min)
+- Trend: Phase 3 progressing well with cleanup and lifecycle complete
 
 *Updated after each plan completion*
 
@@ -78,10 +78,13 @@ Recent decisions affecting current work:
 - **[03-02]** abs-send-time preferred over abs-capture-time when both available
 - **[03-02]** Packets without timing extensions silently skipped
 - **[03-02]** Stream state updated on every packet for timeout detection
-- **[NEW 03-03]** REMB scheduler created in NewBWEInterceptor, attached to estimator immediately
-- **[NEW 03-03]** rembLoop started on BindRTCPWriter (not on constructor)
-- **[NEW 03-03]** RTCPWriter.Write takes []rtcp.Packet, requires unmarshal from MaybeBuildREMB bytes
-- **[NEW 03-03]** Ignore write errors in maybeSendREMB (network issues shouldn't stop loop)
+- **[03-03]** REMB scheduler created in NewBWEInterceptor, attached to estimator immediately
+- **[03-03]** rembLoop started on BindRTCPWriter (not on constructor)
+- **[03-03]** RTCPWriter.Write takes []rtcp.Packet, requires unmarshal from MaybeBuildREMB bytes
+- **[03-03]** Ignore write errors in maybeSendREMB (network issues shouldn't stop loop)
+- **[NEW 03-04]** sync.Once ensures cleanup loop starts only once across multiple streams
+- **[NEW 03-04]** 1-second cleanup interval for 2-second timeout (sufficient granularity)
+- **[NEW 03-04]** Cleanup loop started in BindRemoteStream, not constructor
 
 ### Pending Todos
 
@@ -93,15 +96,15 @@ None - Phase 3 in progress.
 
 ## Session Continuity
 
-Last session: 2026-01-22T18:15:00Z
-Stopped at: Completed 03-03-PLAN.md (BindRTCPWriter and REMB Loop)
+Last session: 2026-01-22T18:34:00Z
+Stopped at: Completed 03-04-PLAN.md (Stream timeout and cleanup)
 Resume file: None
 
 ---
 
 ## Quick Reference
 
-**Next action:** `/gsd:execute-plan 03-04` (RTP processing)
+**Next action:** `/gsd:execute-plan 03-05` (REMB sending) or `/gsd:execute-plan 03-06` (Integration tests)
 
 **Phase 1 COMPLETE:**
 - Delay measurement with timestamp parsing [COMPLETED in 01-01]
@@ -123,8 +126,8 @@ Resume file: None
 - Interceptor setup with extension helpers [COMPLETED in 03-01]
 - Core interceptor implementation [COMPLETED in 03-02]
 - BindRTCPWriter and REMB Loop [COMPLETED in 03-03]
-- RTP processing [NEXT: 03-04]
-- REMB sending [03-05]
+- Stream timeout and cleanup [COMPLETED in 03-04]
+- REMB sending [NEXT: 03-05]
 - Integration tests [03-06]
 
 **Phase 1 API Surface:**
@@ -160,6 +163,7 @@ Resume file: None
 - `NewBWEInterceptor(estimator, opts...)` - Constructor with options
 - `BindRemoteStream(info, reader)` - Wraps RTPReader for packet observation
 - `BindRTCPWriter(writer)` - Captures writer and starts REMB loop
+- `Close()` - Signals shutdown and waits for all goroutines
 - `WithREMBInterval(d)`, `WithSenderSSRC(ssrc)` - Configuration options
 
 **Critical pitfalls handled in Phase 1:**
@@ -176,6 +180,10 @@ Resume file: None
 - Immediate REMB on decrease only (>=3%), not increase [02-04]
 - Standalone core library with no Pion dependencies [02-05]
 - Multi-SSRC aggregation: single estimate for all streams [02-06]
+
+**Critical pitfalls handled in Phase 3:**
+- Stream timeout with graceful cleanup after 2s inactivity [03-04]
+- Close() waits for all goroutines to complete [03-04]
 
 **Phase 2 Requirements Verified:**
 All 12 Phase 2 requirements verified in TestPhase2_RequirementsVerification:
