@@ -179,8 +179,11 @@ func (i *BWEInterceptor) processRTP(raw []byte, ssrc uint32) {
 	// Try abs-send-time first (preferred, 3 bytes)
 	var sendTime uint32
 	if absID != 0 {
-		if ext := header.GetExtension(absID); len(ext) >= 3 {
-			sendTime, _ = bwe.ParseAbsSendTime(ext)
+		if extData := header.GetExtension(absID); len(extData) >= 3 {
+			var ext rtp.AbsSendTimeExtension // Stack allocated - CRITICAL for 0 allocs/op
+			if err := ext.Unmarshal(extData); err == nil {
+				sendTime = uint32(ext.Timestamp) // Cast from uint64 to uint32 (24-bit fits)
+			}
 		}
 	}
 
