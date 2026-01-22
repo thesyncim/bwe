@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 3 of 4 (Pion Integration)
-Plan: 4 of 6 in current phase
+Plan: 5 of 6 in current phase
 Status: In progress
-Last activity: 2026-01-22 - Completed 03-04-PLAN.md (Stream timeout and cleanup)
+Last activity: 2026-01-22 - Completed 03-05-PLAN.md (InterceptorFactory)
 
-Progress: [████████████████░░░░░░░] 70% (16/23 plans)
+Progress: [█████████████████░░░░░░] 74% (17/23 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 16
-- Average duration: 3.7 min
-- Total execution time: 59 min
+- Total plans completed: 17
+- Average duration: 3.6 min
+- Total execution time: 62 min
 
 **By Phase:**
 
@@ -29,12 +29,12 @@ Progress: [████████████████░░░░░░░
 |-------|-------|-------|----------|
 | 1. Foundation | 6/6 | 23 min | 3.8 min |
 | 2. Rate Control | 6/6 | 20 min | 3.3 min |
-| 3. Pion Integration | 4/6 | 16 min | 4.0 min |
+| 3. Pion Integration | 5/6 | 19 min | 3.8 min |
 | 4. Validation | 0/5 | - | - |
 
 **Recent Trend:**
-- Last 6 plans: 02-05 (3 min), 02-06 (7 min), 03-01 (3 min), 03-02 (4 min), 03-03 (5 min), 03-04 (4 min)
-- Trend: Phase 3 progressing well with cleanup and lifecycle complete
+- Last 6 plans: 02-06 (7 min), 03-01 (3 min), 03-02 (4 min), 03-03 (5 min), 03-04 (4 min), 03-05 (3 min)
+- Trend: Phase 3 nearing completion, factory pattern implemented
 
 *Updated after each plan completion*
 
@@ -82,9 +82,12 @@ Recent decisions affecting current work:
 - **[03-03]** rembLoop started on BindRTCPWriter (not on constructor)
 - **[03-03]** RTCPWriter.Write takes []rtcp.Packet, requires unmarshal from MaybeBuildREMB bytes
 - **[03-03]** Ignore write errors in maybeSendREMB (network issues shouldn't stop loop)
-- **[NEW 03-04]** sync.Once ensures cleanup loop starts only once across multiple streams
-- **[NEW 03-04]** 1-second cleanup interval for 2-second timeout (sufficient granularity)
-- **[NEW 03-04]** Cleanup loop started in BindRemoteStream, not constructor
+- **[03-04]** sync.Once ensures cleanup loop starts only once across multiple streams
+- **[03-04]** 1-second cleanup interval for 2-second timeout (sufficient granularity)
+- **[03-04]** Cleanup loop started in BindRemoteStream, not constructor
+- **[NEW 03-05]** Separate factory options from interceptor options (WithFactory* prefix)
+- **[NEW 03-05]** Factory creates independent BandwidthEstimator per interceptor
+- **[NEW 03-05]** id parameter from Pion ignored (not needed for our implementation)
 
 ### Pending Todos
 
@@ -92,19 +95,19 @@ None yet.
 
 ### Blockers/Concerns
 
-None - Phase 3 in progress.
+None - Phase 3 nearly complete, one plan remaining.
 
 ## Session Continuity
 
-Last session: 2026-01-22T18:34:00Z
-Stopped at: Completed 03-04-PLAN.md (Stream timeout and cleanup)
+Last session: 2026-01-22T18:16:05Z
+Stopped at: Completed 03-05-PLAN.md (InterceptorFactory)
 Resume file: None
 
 ---
 
 ## Quick Reference
 
-**Next action:** `/gsd:execute-plan 03-05` (REMB sending) or `/gsd:execute-plan 03-06` (Integration tests)
+**Next action:** `/gsd:execute-plan 03-06` (Integration tests)
 
 **Phase 1 COMPLETE:**
 - Delay measurement with timestamp parsing [COMPLETED in 01-01]
@@ -127,8 +130,8 @@ Resume file: None
 - Core interceptor implementation [COMPLETED in 03-02]
 - BindRTCPWriter and REMB Loop [COMPLETED in 03-03]
 - Stream timeout and cleanup [COMPLETED in 03-04]
-- REMB sending [NEXT: 03-05]
-- Integration tests [03-06]
+- InterceptorFactory for registry integration [COMPLETED in 03-05]
+- Integration tests [NEXT: 03-06]
 
 **Phase 1 API Surface:**
 - `DelayEstimator` - Main entry point
@@ -153,7 +156,7 @@ Resume file: None
 - `MaybeBuildREMB(time.Time) ([]byte, bool, error)` - Build REMB if needed
 - `GetLastPacketTime() time.Time` - Get arrival time of last packet
 
-**Phase 3 API Surface (IN PROGRESS):**
+**Phase 3 API Surface (NEAR COMPLETE):**
 - `pkg/bwe/interceptor` package for Pion integration
 - `AbsSendTimeURI`, `AbsCaptureTimeURI` - Extension URI constants
 - `FindExtensionID(exts, uri)` - Extension ID lookup
@@ -164,7 +167,11 @@ Resume file: None
 - `BindRemoteStream(info, reader)` - Wraps RTPReader for packet observation
 - `BindRTCPWriter(writer)` - Captures writer and starts REMB loop
 - `Close()` - Signals shutdown and waits for all goroutines
-- `WithREMBInterval(d)`, `WithSenderSSRC(ssrc)` - Configuration options
+- `WithREMBInterval(d)`, `WithSenderSSRC(ssrc)` - Interceptor configuration options
+- `BWEInterceptorFactory` - Factory for interceptor.Registry integration
+- `NewBWEInterceptorFactory(opts...)` - Factory constructor
+- `WithInitialBitrate`, `WithMinBitrate`, `WithMaxBitrate` - Factory bitrate options
+- `WithFactoryREMBInterval`, `WithFactorySenderSSRC` - Factory REMB options
 
 **Critical pitfalls handled in Phase 1:**
 - Adaptive threshold required (static causes TCP starvation) [HANDLED]
@@ -184,6 +191,7 @@ Resume file: None
 **Critical pitfalls handled in Phase 3:**
 - Stream timeout with graceful cleanup after 2s inactivity [03-04]
 - Close() waits for all goroutines to complete [03-04]
+- Factory creates independent estimators (no shared state) [03-05]
 
 **Phase 2 Requirements Verified:**
 All 12 Phase 2 requirements verified in TestPhase2_RequirementsVerification:
