@@ -551,3 +551,192 @@ func TestREMBScheduler_AttachedOnCreate(t *testing.T) {
 	// Verify REMB scheduler was attached
 	assert.NotNil(t, i.rembScheduler, "REMB scheduler should be created")
 }
+
+// --- Stream Timeout and Close Tests ---
+
+func TestStreamTimeout_RemovesInactiveStreams(t *testing.T) {
+	estimator := bwe.NewBandwidthEstimator(bwe.DefaultBandwidthEstimatorConfig(), nil)
+	i := NewBWEInterceptor(estimator)
+	defer i.Close()
+
+	testSSRC := uint32(0x12345678)
+
+	// Bind a stream (this starts the cleanup loop)
+	info := &interceptor.StreamInfo{
+		SSRC: testSSRC,
+		RTPHeaderExtensions: []interceptor.RTPHeaderExtension{
+			{URI: AbsSendTimeURI, ID: 3},
+		},
+	}
+	_ = i.BindRemoteStream(info, &mockRTPReader{})
+
+	// Verify stream exists initially
+	_, exists := i.streams.Load(testSSRC)
+	require.True(t, exists, "stream should exist initially")
+
+	// Wait for timeout (2s) + cleanup interval (1s) + margin
+	time.Sleep(3500 * time.Millisecond)
+
+	// Verify stream was removed by cleanup loop
+	_, exists = i.streams.Load(testSSRC)
+	assert.False(t, exists, "stream should be removed after timeout")
+}
+
+func TestClose_StopsGoroutines(t *testing.T) {
+	estimator := bwe.NewBandwidthEstimator(bwe.DefaultBandwidthEstimatorConfig(), nil)
+	i := NewBWEInterceptor(estimator)
+
+	// Bind stream to start cleanup loop goroutine
+	info := &interceptor.StreamInfo{
+		SSRC: 12345,
+		RTPHeaderExtensions: []interceptor.RTPHeaderExtension{
+			{URI: AbsSendTimeURI, ID: 3},
+		},
+	}
+	_ = i.BindRemoteStream(info, &mockRTPReader{})
+
+	// Also bind RTCP writer to start REMB loop
+	mockWriter := &mockRTCPWriter{}
+	i.BindRTCPWriter(mockWriter)
+
+	// Close should complete without hanging (goroutines should stop)
+	done := make(chan struct{})
+	go func() {
+		err := i.Close()
+		assert.NoError(t, err)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Good, Close() completed
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close() timed out - goroutines may not have stopped")
+	}
+}
+
+func TestClose_BeforeGoroutinesStarted(t *testing.T) {
+	estimator := bwe.NewBandwidthEstimator(bwe.DefaultBandwidthEstimatorConfig(), nil)
+	i := NewBWEInterceptor(estimator)
+
+	// Close immediately without binding any streams
+	// (no goroutines started yet)
+	err := i.Close()
+	assert.NoError(t, err)
+}
+
+func TestCleanupLoop_ConcurrentAccess(t *testing.T) {
+	estimator := bwe.NewBandwidthEstimator(bwe.DefaultBandwidthEstimatorConfig(), nil)
+	i := NewBWEInterceptor(estimator)
+	defer i.Close()
+
+	// Spawn multiple goroutines that bind/unbind streams concurrently
+	var wg sync.WaitGroup
+	for j := 0; j < 10; j++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			ssrc := uint32(idx)
+			info := &interceptor.StreamInfo{
+				SSRC: ssrc,
+				RTPHeaderExtensions: []interceptor.RTPHeaderExtension{
+					{URI: AbsSendTimeURI, ID: 3},
+				},
+			}
+
+			// Bind and unbind rapidly
+			for k := 0; k < 10; k++ {
+				_ = i.BindRemoteStream(info, &mockRTPReader{})
+				time.Sleep(time.Millisecond)
+				i.UnbindRemoteStream(info)
+			}
+		}(j)
+	}
+
+	wg.Wait()
+	// Test passes if no data races detected (run with -race)
+}
+
+func TestCleanupLoop_StartsOnlyOnce(t *testing.T) {
+	estimator := bwe.NewBandwidthEstimator(bwe.DefaultBandwidthEstimatorConfig(), nil)
+	i := NewBWEInterceptor(estimator)
+	// Note: No defer Close() here because we're explicitly testing Close() behavior
+
+	// Bind multiple streams rapidly
+	for j := 0; j < 10; j++ {
+		info := &interceptor.StreamInfo{
+			SSRC: uint32(j),
+			RTPHeaderExtensions: []interceptor.RTPHeaderExtension{
+				{URI: AbsSendTimeURI, ID: 3},
+			},
+		}
+		_ = i.BindRemoteStream(info, &mockRTPReader{})
+	}
+
+	// If sync.Once works correctly, only one cleanupLoop goroutine should be running
+	// We verify this indirectly by checking that Close() completes quickly
+	// (if multiple goroutines were spawned, wg.Wait() would hang or behave incorrectly)
+	done := make(chan struct{})
+	go func() {
+		err := i.Close()
+		assert.NoError(t, err)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Good - single goroutine cleanup worked
+	case <-time.After(3 * time.Second):
+		t.Fatal("Close() timed out - possible multiple cleanup goroutines issue")
+	}
+}
+
+func TestStreamTimeout_ActiveStreamNotRemoved(t *testing.T) {
+	estimator := bwe.NewBandwidthEstimator(bwe.DefaultBandwidthEstimatorConfig(), nil)
+	i := NewBWEInterceptor(estimator)
+	defer i.Close()
+
+	testSSRC := uint32(0xAABBCCDD)
+	extID := uint8(3)
+
+	info := &interceptor.StreamInfo{
+		SSRC: testSSRC,
+		RTPHeaderExtensions: []interceptor.RTPHeaderExtension{
+			{URI: AbsSendTimeURI, ID: int(extID)},
+		},
+	}
+
+	// Create enough packets to keep stream active
+	var packets [][]byte
+	for j := 0; j < 50; j++ {
+		packets = append(packets, makeRTPWithAbsSendTime(testSSRC, extID, uint32(j*0x1000)))
+	}
+
+	reader := &mockRTPReader{packets: packets}
+	wrappedReader := i.BindRemoteStream(info, reader)
+
+	// Keep sending packets over 3 seconds (longer than timeout)
+	buf := make([]byte, 1500)
+	stopCh := make(chan struct{})
+	go func() {
+		for j := 0; j < 30; j++ { // Send packets over ~3 seconds
+			select {
+			case <-stopCh:
+				return
+			default:
+				// Reinitialize reader with new packets
+				reader.packets = append(reader.packets, makeRTPWithAbsSendTime(testSSRC, extID, uint32((50+j)*0x1000)))
+				wrappedReader.Read(buf, nil)
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
+	}()
+
+	// Wait 3.5 seconds - stream should still exist because it's active
+	time.Sleep(3500 * time.Millisecond)
+	close(stopCh)
+
+	// Stream should still exist because it was active
+	_, exists := i.streams.Load(testSSRC)
+	assert.True(t, exists, "active stream should not be removed")
+}
