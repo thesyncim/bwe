@@ -192,3 +192,34 @@ func (i *BWEInterceptor) processRTP(raw []byte, ssrc uint32) {
 	}
 	i.estimator.OnPacket(pkt)
 }
+
+// cleanupLoop runs periodically to remove inactive streams.
+// It checks every second and removes streams that haven't received
+// packets for longer than streamTimeout (2 seconds).
+func (i *BWEInterceptor) cleanupLoop() {
+	defer i.wg.Done()
+
+	ticker := time.NewTicker(time.Second) // Check every second
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-i.closed:
+			return
+		case now := <-ticker.C:
+			i.cleanupInactiveStreams(now)
+		}
+	}
+}
+
+// cleanupInactiveStreams removes streams that haven't received packets
+// for longer than streamTimeout. Uses sync.Map.Range for thread-safe iteration.
+func (i *BWEInterceptor) cleanupInactiveStreams(now time.Time) {
+	i.streams.Range(func(key, value any) bool {
+		state := value.(*streamState)
+		if now.Sub(state.LastPacket()) > streamTimeout {
+			i.streams.Delete(key)
+		}
+		return true // Continue iteration
+	})
+}
