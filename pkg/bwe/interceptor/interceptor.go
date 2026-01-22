@@ -105,6 +105,20 @@ func (i *BWEInterceptor) Close() error {
 	return nil
 }
 
+// BindRTCPWriter is called by Pion when the RTCP writer is ready.
+// It captures the writer for sending REMB packets and starts the REMB loop.
+func (i *BWEInterceptor) BindRTCPWriter(writer interceptor.RTCPWriter) interceptor.RTCPWriter {
+	i.mu.Lock()
+	i.rtcpWriter = writer
+	i.mu.Unlock()
+
+	// Start REMB loop goroutine
+	i.wg.Add(1)
+	go i.rembLoop()
+
+	return writer // Pass through unchanged
+}
+
 // BindRemoteStream is called by Pion when a new remote stream is detected.
 // It extracts RTP header extension IDs and wraps the reader to observe packets.
 func (i *BWEInterceptor) BindRemoteStream(info *interceptor.StreamInfo, reader interceptor.RTPReader) interceptor.RTPReader {
@@ -191,6 +205,13 @@ func (i *BWEInterceptor) processRTP(raw []byte, ssrc uint32) {
 		SSRC:        ssrc,
 	}
 	i.estimator.OnPacket(pkt)
+}
+
+// rembLoop runs periodically to send REMB packets.
+// It uses the configured rembInterval (default 1s).
+func (i *BWEInterceptor) rembLoop() {
+	defer i.wg.Done()
+	// Implementation in next task
 }
 
 // cleanupLoop runs periodically to remove inactive streams.
