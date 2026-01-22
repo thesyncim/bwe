@@ -1,2 +1,6 @@
 .idea
 .goland-state.json
+
+# Compiled binaries
+chrome-interop
+soak
