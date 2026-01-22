@@ -88,15 +88,15 @@ Plans:
   4. Extension IDs are auto-detected from SDP negotiation (abs-send-time and abs-capture-time)
   5. Streams timeout gracefully after 2 seconds of inactivity without resource leaks
 
-**Plans**: 5-7 plans (TBD during planning)
+**Plans**: 6 plans in 5 waves
 
 Plans:
-- [ ] 03-01: SDP extension ID negotiation and parsing (TIME-04)
-- [ ] 03-02: Interceptor interface implementation (PION-01)
-- [ ] 03-03: BindRemoteStream RTP observation (PION-02)
-- [ ] 03-04: BindRTCPWriter REMB output (PION-03)
-- [ ] 03-05: Stream timeout and cleanup (PION-04)
-- [ ] 03-06: InterceptorFactory and sync.Pool optimization (PION-05, PERF-02)
+- [ ] 03-01-PLAN.md — Dependencies, extension ID helpers, stream state types (TIME-04)
+- [ ] 03-02-PLAN.md — BWEInterceptor with BindRemoteStream (PION-01, PION-02)
+- [ ] 03-03-PLAN.md — BindRTCPWriter and REMB loop (PION-03)
+- [ ] 03-04-PLAN.md — Stream timeout and Close() (PION-04)
+- [ ] 03-05-PLAN.md — InterceptorFactory for PeerConnection (PION-05)
+- [ ] 03-06-PLAN.md — sync.Pool optimization and integration tests (PERF-02)
 
 ---
 
@@ -135,7 +135,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 |-------|----------------|--------|-----------|
 | 1. Foundation & Core Pipeline | 6/6 | Complete | 2026-01-22 |
 | 2. Rate Control & REMB | 6/6 | Complete | 2026-01-22 |
-| 3. Pion Integration | 0/6 | Ready | - |
+| 3. Pion Integration | 0/6 | Planned | - |
 | 4. Optimization & Validation | 0/5 | Not started | - |
 
 ---
@@ -161,4 +161,4 @@ All 39 v1 requirements mapped to exactly one phase:
 ---
 
 *Roadmap created: 2026-01-22*
-*Last updated: 2026-01-22 after Phase 2 completion*
+*Last updated: 2026-01-22 after Phase 3 planning*
