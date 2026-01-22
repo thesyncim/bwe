@@ -9,30 +9,30 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Timestamp Parsing
 
-- [ ] **TIME-01**: Parse abs-send-time 24-bit RTP header extension (6.18 fixed-point format)
-- [ ] **TIME-02**: Handle 64-second timestamp wraparound correctly
-- [ ] **TIME-03**: Parse abs-capture-time RTP header extension as alternative input
-- [ ] **TIME-04**: Auto-detect extension IDs from SDP negotiation
+- [x] **TIME-01**: Parse abs-send-time 24-bit RTP header extension (6.18 fixed-point format)
+- [x] **TIME-02**: Handle 64-second timestamp wraparound correctly
+- [x] **TIME-03**: Parse abs-capture-time RTP header extension as alternative input
+- [x] **TIME-04**: Auto-detect extension IDs from SDP negotiation
 
 ### Delay Measurement
 
-- [ ] **DELAY-01**: Compute inter-arrival time deltas (receive delta vs send delta)
-- [ ] **DELAY-02**: Implement packet group aggregation with 5ms burst threshold
-- [ ] **DELAY-03**: Handle 32-bit RTP timestamp wraparound (6-13 hour wrap)
-- [ ] **DELAY-04**: Support configurable burst threshold parameter
+- [x] **DELAY-01**: Compute inter-arrival time deltas (receive delta vs send delta)
+- [x] **DELAY-02**: Implement packet group aggregation with 5ms burst threshold
+- [x] **DELAY-03**: Handle 32-bit RTP timestamp wraparound (6-13 hour wrap)
+- [x] **DELAY-04**: Support configurable burst threshold parameter
 
 ### Noise Filtering
 
-- [ ] **FILTER-01**: Implement Kalman filter for delay gradient estimation per IETF draft
-- [ ] **FILTER-02**: Use spec-compliant parameters (q=10^-3, e(0)=0.1)
-- [ ] **FILTER-03**: Implement trendline estimator as alternative filter option
+- [x] **FILTER-01**: Implement Kalman filter for delay gradient estimation per IETF draft
+- [x] **FILTER-02**: Use spec-compliant parameters (q=10^-3, e(0)=0.1)
+- [x] **FILTER-03**: Implement trendline estimator as alternative filter option
 
 ### Congestion Detection
 
-- [ ] **DETECT-01**: Implement overuse detector with 3 states (Normal/Overusing/Underusing)
-- [ ] **DETECT-02**: Implement adaptive threshold with asymmetric coefficients (K_u=0.01, K_d=0.00018)
-- [ ] **DETECT-03**: Require sustained overuse (≥10ms) before signaling state change
-- [ ] **DETECT-04**: Provide state change callbacks to application code
+- [x] **DETECT-01**: Implement overuse detector with 3 states (Normal/Overusing/Underusing)
+- [x] **DETECT-02**: Implement adaptive threshold with asymmetric coefficients (K_u=0.01, K_d=0.00018)
+- [x] **DETECT-03**: Require sustained overuse (≥10ms) before signaling state change
+- [x] **DETECT-04**: Provide state change callbacks to application code
 
 ### Rate Control
 
@@ -57,17 +57,17 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Pion Integration
 
-- [ ] **PION-01**: Implement Pion Interceptor interface
-- [ ] **PION-02**: Implement BindRemoteStream for RTP packet observation
-- [ ] **PION-03**: Implement BindRTCPWriter for REMB packet output
-- [ ] **PION-04**: Handle stream timeout with graceful cleanup after 2s inactivity
-- [ ] **PION-05**: Provide InterceptorFactory for PeerConnection integration
+- [x] **PION-01**: Implement Pion Interceptor interface
+- [x] **PION-02**: Implement BindRemoteStream for RTP packet observation
+- [x] **PION-03**: Implement BindRTCPWriter for REMB packet output
+- [x] **PION-04**: Handle stream timeout with graceful cleanup after 2s inactivity
+- [x] **PION-05**: Provide InterceptorFactory for PeerConnection integration
 
 ### Performance
 
 - [ ] **PERF-01**: Achieve <1 allocation per packet in steady state
-- [ ] **PERF-02**: Use sync.Pool for packet metadata structures
-- [ ] **PERF-03**: Use monotonic time correctly (avoid wall clock leakage)
+- [x] **PERF-02**: Use sync.Pool for packet metadata structures
+- [x] **PERF-03**: Use monotonic time correctly (avoid wall clock leakage)
 
 ### Validation
 
@@ -113,41 +113,41 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TIME-01 | Phase 1 | Pending |
-| TIME-02 | Phase 1 | Pending |
-| TIME-03 | Phase 1 | Pending |
-| TIME-04 | Phase 3 | Pending |
-| DELAY-01 | Phase 1 | Pending |
-| DELAY-02 | Phase 1 | Pending |
-| DELAY-03 | Phase 1 | Pending |
-| DELAY-04 | Phase 1 | Pending |
-| FILTER-01 | Phase 1 | Pending |
-| FILTER-02 | Phase 1 | Pending |
-| FILTER-03 | Phase 1 | Pending |
-| DETECT-01 | Phase 1 | Pending |
-| DETECT-02 | Phase 1 | Pending |
-| DETECT-03 | Phase 1 | Pending |
-| DETECT-04 | Phase 1 | Pending |
-| RATE-01 | Phase 2 | Pending |
-| RATE-02 | Phase 2 | Pending |
-| RATE-03 | Phase 2 | Pending |
-| RATE-04 | Phase 2 | Pending |
-| REMB-01 | Phase 2 | Pending |
-| REMB-02 | Phase 2 | Pending |
-| REMB-03 | Phase 2 | Pending |
-| REMB-04 | Phase 2 | Pending |
-| CORE-01 | Phase 2 | Pending |
-| CORE-02 | Phase 2 | Pending |
-| CORE-03 | Phase 2 | Pending |
-| CORE-04 | Phase 2 | Pending |
-| PION-01 | Phase 3 | Pending |
-| PION-02 | Phase 3 | Pending |
-| PION-03 | Phase 3 | Pending |
-| PION-04 | Phase 3 | Pending |
-| PION-05 | Phase 3 | Pending |
+| TIME-01 | Phase 1 | Complete |
+| TIME-02 | Phase 1 | Complete |
+| TIME-03 | Phase 1 | Complete |
+| TIME-04 | Phase 3 | Complete |
+| DELAY-01 | Phase 1 | Complete |
+| DELAY-02 | Phase 1 | Complete |
+| DELAY-03 | Phase 1 | Complete |
+| DELAY-04 | Phase 1 | Complete |
+| FILTER-01 | Phase 1 | Complete |
+| FILTER-02 | Phase 1 | Complete |
+| FILTER-03 | Phase 1 | Complete |
+| DETECT-01 | Phase 1 | Complete |
+| DETECT-02 | Phase 1 | Complete |
+| DETECT-03 | Phase 1 | Complete |
+| DETECT-04 | Phase 1 | Complete |
+| RATE-01 | Phase 2 | Complete |
+| RATE-02 | Phase 2 | Complete |
+| RATE-03 | Phase 2 | Complete |
+| RATE-04 | Phase 2 | Complete |
+| REMB-01 | Phase 2 | Complete |
+| REMB-02 | Phase 2 | Complete |
+| REMB-03 | Phase 2 | Complete |
+| REMB-04 | Phase 2 | Complete |
+| CORE-01 | Phase 2 | Complete |
+| CORE-02 | Phase 2 | Complete |
+| CORE-03 | Phase 2 | Complete |
+| CORE-04 | Phase 2 | Complete |
+| PION-01 | Phase 3 | Complete |
+| PION-02 | Phase 3 | Complete |
+| PION-03 | Phase 3 | Complete |
+| PION-04 | Phase 3 | Complete |
+| PION-05 | Phase 3 | Complete |
 | PERF-01 | Phase 4 | Pending |
-| PERF-02 | Phase 3 | Pending |
-| PERF-03 | Phase 1 | Pending |
+| PERF-02 | Phase 3 | Complete |
+| PERF-03 | Phase 1 | Complete |
 | VALID-01 | Phase 4 | Pending |
 | VALID-02 | Phase 4 | Pending |
 | VALID-03 | Phase 4 | Pending |
@@ -160,4 +160,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-22*
-*Last updated: 2026-01-22 after roadmap creation*
+*Last updated: 2026-01-22 after Phase 3 execution complete*
