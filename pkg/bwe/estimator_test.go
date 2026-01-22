@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"multicodecsimulcast/pkg/bwe/internal"
+	"bwe/pkg/bwe/internal"
 )
 
 // =============================================================================

@@ -5,7 +5,7 @@ package bwe
 import (
 	"time"
 
-	"multicodecsimulcast/pkg/bwe/internal"
+	"bwe/pkg/bwe/internal"
 )
 
 // FilterType specifies which delay filter to use in the delay estimator.

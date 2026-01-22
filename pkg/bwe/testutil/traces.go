@@ -8,7 +8,7 @@ package testutil
 import (
 	"time"
 
-	"multicodecsimulcast/pkg/bwe/internal"
+	"bwe/pkg/bwe/internal"
 )
 
 // PacketInfo mirrors bwe.PacketInfo for trace generation without import cycle.

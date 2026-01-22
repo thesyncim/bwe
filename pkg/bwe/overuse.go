@@ -6,7 +6,7 @@ import (
 	"math"
 	"time"
 
-	"multicodecsimulcast/pkg/bwe/internal"
+	"bwe/pkg/bwe/internal"
 )
 
 // StateChangeCallback is called when bandwidth usage state changes.
