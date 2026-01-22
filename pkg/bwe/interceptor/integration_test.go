@@ -394,3 +394,257 @@ func TestIntegration_CloseStopsAllGoroutines(t *testing.T) {
 		t.Fatal("Close() timed out - goroutines may not have stopped")
 	}
 }
+
+// --- Phase 3 Requirements Verification ---
+
+// TestPhase3_RequirementsVerification tests all Phase 3 requirements in one comprehensive test.
+// Requirements:
+// - TIME-04: Auto-detect extension IDs from SDP negotiation
+// - PION-01: Implement Pion Interceptor interface
+// - PION-02: Implement BindRemoteStream for RTP packet observation
+// - PION-03: Implement BindRTCPWriter for REMB packet output
+// - PION-04: Handle stream timeout with graceful cleanup after 2s inactivity
+// - PION-05: Provide InterceptorFactory for PeerConnection integration
+// - PERF-02: Use sync.Pool for packet metadata structures
+func TestPhase3_RequirementsVerification(t *testing.T) {
+	t.Run("TIME-04_ExtensionIDsFromSDP", func(t *testing.T) {
+		// Requirement: Auto-detect extension IDs from SDP negotiation
+		// The extension IDs come from StreamInfo.RTPHeaderExtensions which
+		// Pion populates from SDP negotiation.
+
+		factory, err := NewBWEInterceptorFactory()
+		require.NoError(t, err)
+
+		inter, err := factory.NewInterceptor("time-04-test")
+		require.NoError(t, err)
+		bweInter := inter.(*BWEInterceptor)
+		defer bweInter.Close()
+
+		// StreamInfo contains extension mappings (as would come from SDP)
+		info := &interceptor.StreamInfo{
+			SSRC: 0x12345678,
+			RTPHeaderExtensions: []interceptor.RTPHeaderExtension{
+				{URI: AbsSendTimeURI, ID: 5},      // abs-send-time at ID 5
+				{URI: AbsCaptureTimeURI, ID: 7},   // abs-capture-time at ID 7
+			},
+		}
+
+		_ = bweInter.BindRemoteStream(info, newMockRTPReaderWithData(nil))
+
+		// Verify extension IDs were auto-detected
+		assert.Equal(t, uint32(5), bweInter.absExtID.Load(),
+			"TIME-04: abs-send-time extension ID should be auto-detected from SDP")
+		assert.Equal(t, uint32(7), bweInter.captureExtID.Load(),
+			"TIME-04: abs-capture-time extension ID should be auto-detected from SDP")
+	})
+
+	t.Run("PION-01_InterceptorInterface", func(t *testing.T) {
+		// Requirement: Implement Pion Interceptor interface
+
+		factory, err := NewBWEInterceptorFactory()
+		require.NoError(t, err)
+
+		inter, err := factory.NewInterceptor("pion-01-test")
+		require.NoError(t, err)
+		defer inter.Close()
+
+		// Verify it implements the Interceptor interface
+		var _ interceptor.Interceptor = inter
+
+		// Cast to BWEInterceptor should succeed
+		bweInter, ok := inter.(*BWEInterceptor)
+		assert.True(t, ok, "PION-01: Should implement Pion Interceptor interface")
+		assert.NotNil(t, bweInter)
+	})
+
+	t.Run("PION-02_BindRemoteStream", func(t *testing.T) {
+		// Requirement: Implement BindRemoteStream for RTP packet observation
+
+		factory, err := NewBWEInterceptorFactory()
+		require.NoError(t, err)
+
+		inter, err := factory.NewInterceptor("pion-02-test")
+		require.NoError(t, err)
+		bweInter := inter.(*BWEInterceptor)
+		defer bweInter.Close()
+
+		ssrc := uint32(0xABCDEF00)
+		extID := uint8(3)
+		info := &interceptor.StreamInfo{
+			SSRC: ssrc,
+			RTPHeaderExtensions: []interceptor.RTPHeaderExtension{
+				{URI: AbsSendTimeURI, ID: int(extID)},
+			},
+		}
+
+		// Create packets
+		packets := generateRTPPackets(ssrc, extID, 10, 0x010000, 0x1000)
+		reader := newMockRTPReaderWithData(packets)
+
+		// BindRemoteStream should return wrapped reader
+		wrappedReader := bweInter.BindRemoteStream(info, reader)
+		require.NotNil(t, wrappedReader, "PION-02: BindRemoteStream should return wrapped reader")
+
+		// Wrapped reader should observe packets and feed to estimator
+		buf := make([]byte, 1500)
+		for i := 0; i < 10; i++ {
+			n, _, err := wrappedReader.Read(buf, nil)
+			require.NoError(t, err)
+			require.Greater(t, n, 0)
+		}
+
+		// Verify packets were observed (estimator has SSRC)
+		ssrcs := bweInter.estimator.GetSSRCs()
+		assert.Contains(t, ssrcs, ssrc, "PION-02: RTP packets should be observed and fed to estimator")
+	})
+
+	t.Run("PION-03_BindRTCPWriterREMB", func(t *testing.T) {
+		// Requirement: Implement BindRTCPWriter for REMB packet output
+
+		factory, err := NewBWEInterceptorFactory(
+			WithFactoryREMBInterval(50*time.Millisecond),
+		)
+		require.NoError(t, err)
+
+		inter, err := factory.NewInterceptor("pion-03-test")
+		require.NoError(t, err)
+		bweInter := inter.(*BWEInterceptor)
+		defer bweInter.Close()
+
+		// Feed some packets to generate estimate
+		ssrc := uint32(0x12345678)
+		extID := uint8(3)
+		info := &interceptor.StreamInfo{
+			SSRC: ssrc,
+			RTPHeaderExtensions: []interceptor.RTPHeaderExtension{
+				{URI: AbsSendTimeURI, ID: int(extID)},
+			},
+		}
+		packets := generateRTPPackets(ssrc, extID, 20, 0, 0x1000)
+		reader := newMockRTPReaderWithData(packets)
+		wrapped := bweInter.BindRemoteStream(info, reader)
+
+		buf := make([]byte, 1500)
+		for i := 0; i < 20; i++ {
+			wrapped.Read(buf, nil)
+			time.Sleep(5 * time.Millisecond)
+		}
+
+		// Bind RTCP writer
+		rtcpWriter := newCaptureRTCPWriter()
+		returnedWriter := bweInter.BindRTCPWriter(rtcpWriter)
+
+		// Should return the same writer (pass-through)
+		assert.Equal(t, rtcpWriter, returnedWriter, "PION-03: BindRTCPWriter should return writer")
+
+		// Wait for REMB to be sent
+		time.Sleep(200 * time.Millisecond)
+
+		// Verify REMB was written
+		rembs := rtcpWriter.GetREMBs()
+		assert.Greater(t, len(rembs), 0, "PION-03: REMB packets should be written via RTCPWriter")
+
+		if len(rembs) > 0 {
+			assert.Greater(t, rembs[0].Bitrate, float32(0), "PION-03: REMB should have positive bitrate")
+		}
+	})
+
+	t.Run("PION-04_StreamTimeout", func(t *testing.T) {
+		// Requirement: Handle stream timeout with graceful cleanup after 2s inactivity
+
+		factory, err := NewBWEInterceptorFactory()
+		require.NoError(t, err)
+
+		inter, err := factory.NewInterceptor("pion-04-test")
+		require.NoError(t, err)
+		bweInter := inter.(*BWEInterceptor)
+		defer bweInter.Close()
+
+		ssrc := uint32(0xDEADBEEF)
+		info := &interceptor.StreamInfo{
+			SSRC: ssrc,
+			RTPHeaderExtensions: []interceptor.RTPHeaderExtension{
+				{URI: AbsSendTimeURI, ID: 3},
+			},
+		}
+
+		// Bind stream (starts cleanup loop)
+		_ = bweInter.BindRemoteStream(info, newMockRTPReaderWithData(nil))
+
+		// Stream should exist
+		_, exists := bweInter.streams.Load(ssrc)
+		require.True(t, exists, "stream should exist initially")
+
+		// Wait for timeout (2s) + cleanup interval (1s) + margin
+		time.Sleep(3500 * time.Millisecond)
+
+		// Stream should be cleaned up
+		_, exists = bweInter.streams.Load(ssrc)
+		assert.False(t, exists, "PION-04: Stream should be removed after 2s timeout")
+	})
+
+	t.Run("PION-05_InterceptorFactory", func(t *testing.T) {
+		// Requirement: Provide InterceptorFactory for PeerConnection integration
+
+		// Factory should be creatable with options
+		factory, err := NewBWEInterceptorFactory(
+			WithInitialBitrate(500000),
+			WithMinBitrate(50000),
+			WithMaxBitrate(5000000),
+			WithFactoryREMBInterval(500*time.Millisecond),
+			WithFactorySenderSSRC(0xCAFEBABE),
+		)
+		require.NoError(t, err, "PION-05: Factory should be created successfully")
+		require.NotNil(t, factory)
+
+		// Factory should create interceptors
+		inter1, err := factory.NewInterceptor("conn-1")
+		require.NoError(t, err, "PION-05: Factory should create interceptors")
+		require.NotNil(t, inter1)
+		defer inter1.Close()
+
+		// Each call creates independent interceptor
+		inter2, err := factory.NewInterceptor("conn-2")
+		require.NoError(t, err)
+		require.NotNil(t, inter2)
+		defer inter2.Close()
+
+		bwe1 := inter1.(*BWEInterceptor)
+		bwe2 := inter2.(*BWEInterceptor)
+
+		assert.NotSame(t, bwe1.estimator, bwe2.estimator,
+			"PION-05: Factory should create independent estimators per interceptor")
+	})
+
+	t.Run("PERF-02_SyncPoolForPacketInfo", func(t *testing.T) {
+		// Requirement: Use sync.Pool for packet metadata structures
+		// Verify pool functions exist and work correctly
+
+		// Get from pool
+		pkt := getPacketInfo()
+		require.NotNil(t, pkt, "PERF-02: getPacketInfo should return non-nil")
+
+		// Set values
+		pkt.ArrivalTime = time.Now()
+		pkt.SendTime = 0x010000
+		pkt.Size = 1000
+		pkt.SSRC = 0x12345678
+
+		// Return to pool
+		putPacketInfo(pkt)
+
+		// Get again - should be reset
+		pkt2 := getPacketInfo()
+		require.NotNil(t, pkt2, "PERF-02: Pool should return object after put")
+
+		// Verify fields are reset (pool.New or putPacketInfo reset)
+		assert.True(t, pkt2.ArrivalTime.IsZero(), "PERF-02: ArrivalTime should be reset")
+		assert.Equal(t, uint32(0), pkt2.SendTime, "PERF-02: SendTime should be reset")
+		assert.Equal(t, 0, pkt2.Size, "PERF-02: Size should be reset")
+		assert.Equal(t, uint32(0), pkt2.SSRC, "PERF-02: SSRC should be reset")
+
+		putPacketInfo(pkt2)
+
+		t.Log("PERF-02: sync.Pool for PacketInfo verified")
+	})
+}
