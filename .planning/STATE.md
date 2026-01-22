@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 3 of 4 (Pion Integration)
-Plan: 2 of 6 in current phase
+Plan: 3 of 6 in current phase
 Status: In progress
-Last activity: 2026-01-22 - Completed 03-02-PLAN.md (Core interceptor implementation)
+Last activity: 2026-01-22 - Completed 03-03-PLAN.md (BindRTCPWriter and REMB Loop)
 
-Progress: [██████████████░░░░░░░░░] 61% (14/23 plans)
+Progress: [███████████████░░░░░░░░] 65% (15/23 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 14
-- Average duration: 3.6 min
-- Total execution time: 50 min
+- Total plans completed: 15
+- Average duration: 3.7 min
+- Total execution time: 55 min
 
 **By Phase:**
 
@@ -29,12 +29,12 @@ Progress: [██████████████░░░░░░░░░
 |-------|-------|-------|----------|
 | 1. Foundation | 6/6 | 23 min | 3.8 min |
 | 2. Rate Control | 6/6 | 20 min | 3.3 min |
-| 3. Pion Integration | 2/6 | 7 min | 3.5 min |
+| 3. Pion Integration | 3/6 | 12 min | 4.0 min |
 | 4. Validation | 0/5 | - | - |
 
 **Recent Trend:**
-- Last 6 plans: 02-03 (5 min), 02-04 (2 min), 02-05 (3 min), 02-06 (7 min), 03-01 (3 min), 03-02 (4 min)
-- Trend: Phase 3 progressing well with core interceptor complete
+- Last 6 plans: 02-04 (2 min), 02-05 (3 min), 02-06 (7 min), 03-01 (3 min), 03-02 (4 min), 03-03 (5 min)
+- Trend: Phase 3 progressing well with REMB sending complete
 
 *Updated after each plan completion*
 
@@ -74,10 +74,14 @@ Recent decisions affecting current work:
 - **[03-01]** Extension ID 0 means "not found" - callers must handle gracefully
 - **[03-01]** atomic.Value for lastPacketTime enables thread-safe concurrent access
 - **[03-01]** Unexported streamState type - internal implementation detail
-- **[NEW 03-02]** First stream to provide extension ID wins (CompareAndSwap)
-- **[NEW 03-02]** abs-send-time preferred over abs-capture-time when both available
-- **[NEW 03-02]** Packets without timing extensions silently skipped
-- **[NEW 03-02]** Stream state updated on every packet for timeout detection
+- **[03-02]** First stream to provide extension ID wins (CompareAndSwap)
+- **[03-02]** abs-send-time preferred over abs-capture-time when both available
+- **[03-02]** Packets without timing extensions silently skipped
+- **[03-02]** Stream state updated on every packet for timeout detection
+- **[NEW 03-03]** REMB scheduler created in NewBWEInterceptor, attached to estimator immediately
+- **[NEW 03-03]** rembLoop started on BindRTCPWriter (not on constructor)
+- **[NEW 03-03]** RTCPWriter.Write takes []rtcp.Packet, requires unmarshal from MaybeBuildREMB bytes
+- **[NEW 03-03]** Ignore write errors in maybeSendREMB (network issues shouldn't stop loop)
 
 ### Pending Todos
 
@@ -89,15 +93,15 @@ None - Phase 3 in progress.
 
 ## Session Continuity
 
-Last session: 2026-01-22T18:04:00Z
-Stopped at: Completed 03-02-PLAN.md (Core interceptor implementation)
+Last session: 2026-01-22T18:15:00Z
+Stopped at: Completed 03-03-PLAN.md (BindRTCPWriter and REMB Loop)
 Resume file: None
 
 ---
 
 ## Quick Reference
 
-**Next action:** `/gsd:execute-plan 03-03` (Factory and options)
+**Next action:** `/gsd:execute-plan 03-04` (RTP processing)
 
 **Phase 1 COMPLETE:**
 - Delay measurement with timestamp parsing [COMPLETED in 01-01]
@@ -118,8 +122,8 @@ Resume file: None
 **Phase 3 IN PROGRESS:**
 - Interceptor setup with extension helpers [COMPLETED in 03-01]
 - Core interceptor implementation [COMPLETED in 03-02]
-- Factory and options [NEXT: 03-03]
-- RTP processing [03-04]
+- BindRTCPWriter and REMB Loop [COMPLETED in 03-03]
+- RTP processing [NEXT: 03-04]
 - REMB sending [03-05]
 - Integration tests [03-06]
 
@@ -155,6 +159,7 @@ Resume file: None
 - `BWEInterceptor` - Main interceptor type embedding NoOp
 - `NewBWEInterceptor(estimator, opts...)` - Constructor with options
 - `BindRemoteStream(info, reader)` - Wraps RTPReader for packet observation
+- `BindRTCPWriter(writer)` - Captures writer and starts REMB loop
 - `WithREMBInterval(d)`, `WithSenderSSRC(ssrc)` - Configuration options
 
 **Critical pitfalls handled in Phase 1:**
