@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-01-22)
 
 **Core value:** Generate accurate REMB feedback that matches libwebrtc/Chrome receiver behavior
-**Current focus:** v1.1 Pion Type Adoption - Refactor to use Pion native extension types
+**Current focus:** v1.2 E2E Testing - Comprehensive automated testing infrastructure
 
 ## Current Position
 
-Phase: 5 - Pion Type Adoption
-Plan: 03 of 3 completed
-Status: Phase COMPLETE - v1.1 COMPLETE
-Last activity: 2026-01-22 - Completed 05-03-PLAN.md (Full validation suite)
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-01-22 - Milestone v1.2 started
 
-Progress: [████████████████████████████] 100% (v1.0 + v1.1 complete)
+Progress: [░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 0% (v1.2 in progress)
 
 ## Performance Metrics
 

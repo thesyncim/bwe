@@ -54,18 +54,17 @@ Generate accurate REMB feedback that matches libwebrtc/Chrome receiver behavior 
 - **Performance**: Must handle high packet rates efficiently (video at 60fps, audio at 50pps per stream, potentially multiple streams)
 - **Pion Compatibility**: Interceptor must work with Pion's interceptor chain architecture
 
-## Current Milestone: v1.1 Pion Type Adoption
+## Current Milestone: v1.2 E2E Testing
 
-**Goal:** Refactor BWE implementation to use Pion's native types for marshalling and extension handling — keeping behavior, delegating mechanics to battle-tested code.
+**Goal:** Comprehensive end-to-end testing infrastructure for automated validation of BWE behavior under realistic conditions.
 
 **Target areas:**
-- REMB marshalling → `pion/rtcp.ReceiverEstimatedMaximumBitrate`
-- RTP extension parsing → Pion's extension APIs
-- Timestamp handling → Pion utilities where available
+- Automated Chrome interop testing (headless browser REMB verification)
+- Network simulation (packet loss, bandwidth variation, latency/jitter)
+- Full Pion PeerConnection integration tests
+- CI integration (GitHub Actions + local development)
 
-**Motivation:** Reduce maintenance, better interop, prepare for upstream contribution, cleaner code
-
-**Behavior constraint:** Minor improvements acceptable if Pion handles edge cases better
+**Motivation:** Current testing is extensive but Chrome interop requires manual verification. Automated E2E tests will catch regressions and validate behavior under realistic network conditions.
 
 ## Key Decisions
 
@@ -74,7 +73,7 @@ Generate accurate REMB feedback that matches libwebrtc/Chrome receiver behavior 
 | Receiver-side over send-side | Interop requirement — target systems expect REMB | ✓ Good |
 | Delay-based only for v1 | Reduce scope, loss-based can be added later | ✓ Good |
 | Standalone core + interceptor adapter | Clean separation allows testing algorithm without Pion | ✓ Good |
-| Adopt Pion types for v1.1 | Reduce maintenance, prepare for upstream contribution | — Pending |
+| Adopt Pion types for v1.1 | Reduce maintenance, prepare for upstream contribution | ✓ Good |
 
 ---
-*Last updated: 2026-01-22 after v1.0 milestone complete, starting v1.1*
+*Last updated: 2026-01-22 after v1.1 milestone complete, starting v1.2*
