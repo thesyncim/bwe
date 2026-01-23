@@ -5,7 +5,7 @@ package bwe
 import (
 	"time"
 
-	"bwe/pkg/bwe/internal"
+	"github.com/thesyncim/bwe/pkg/bwe/internal"
 )
 
 // FilterType specifies which delay filter to use in the delay estimator.

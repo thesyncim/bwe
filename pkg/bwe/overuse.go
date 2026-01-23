@@ -6,7 +6,7 @@ import (
 	"math"
 	"time"
 
-	"bwe/pkg/bwe/internal"
+	"github.com/thesyncim/bwe/pkg/bwe/internal"
 )
 
 // StateChangeCallback is called when bandwidth usage state changes.

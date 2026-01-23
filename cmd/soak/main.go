@@ -28,7 +28,7 @@ import (
 	"syscall"
 	"time"
 
-	"bwe/pkg/bwe"
+	"github.com/thesyncim/bwe/pkg/bwe"
 )
 
 const (

@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"bwe/pkg/bwe"
+	"github.com/thesyncim/bwe/pkg/bwe"
 )
 
 // packetInfoPool is a sync.Pool for reusing PacketInfo objects.

@@ -6,7 +6,7 @@ import (
 
 	"github.com/pion/interceptor"
 
-	"bwe/pkg/bwe"
+	"github.com/thesyncim/bwe/pkg/bwe"
 )
 
 // FactoryOption configures the BWEInterceptorFactory.

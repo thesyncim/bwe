@@ -2,8 +2,8 @@
 
 Go implementation of Google Congestion Control (GCC) receiver-side bandwidth estimation for WebRTC.
 
-[![Go Reference](https://pkg.go.dev/badge/bwe.svg)](https://pkg.go.dev/bwe)
-[![Go Report Card](https://goreportcard.com/badge/github.com/your-org/bwe)](https://goreportcard.com/report/github.com/your-org/bwe)
+[![Go Reference](https://pkg.go.dev/badge/github.com/thesyncim/bwe.svg)](https://pkg.go.dev/github.com/thesyncim/bwe)
+[![Go Report Card](https://goreportcard.com/badge/github.com/thesyncim/bwe)](https://goreportcard.com/report/github.com/thesyncim/bwe)
 
 ## Features
 
@@ -54,7 +54,7 @@ The library is organized into two layers:
 ## Installation
 
 ```bash
-go get bwe
+go get github.com/thesyncim/bwe
 ```
 
 ## Quick Start
@@ -67,7 +67,7 @@ The interceptor handles everything automatically: extension parsing, timing extr
 import (
     "github.com/pion/interceptor"
     "github.com/pion/webrtc/v4"
-    bweint "bwe/pkg/bwe/interceptor"
+    bweint "github.com/thesyncim/bwe/pkg/bwe/interceptor"
 )
 
 func setupPeerConnection() (*webrtc.PeerConnection, error) {
@@ -109,7 +109,7 @@ Use the core library directly when you need fine-grained control or integration 
 import (
     "fmt"
     "time"
-    "bwe/pkg/bwe"
+    "github.com/thesyncim/bwe/pkg/bwe"
 )
 
 func main() {

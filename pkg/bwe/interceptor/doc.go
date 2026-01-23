@@ -12,7 +12,7 @@
 //	import (
 //	    "github.com/pion/interceptor"
 //	    "github.com/pion/webrtc/v4"
-//	    bweint "bwe/pkg/bwe/interceptor"
+//	    bweint "github.com/thesyncim/bwe/pkg/bwe/interceptor"
 //	)
 //
 //	func setupPeerConnection() (*webrtc.PeerConnection, error) {

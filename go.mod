@@ -1,4 +1,4 @@
-module bwe
+module github.com/thesyncim/bwe
 
 go 1.25
 

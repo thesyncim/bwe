@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"bwe/pkg/bwe/internal"
-	"bwe/pkg/bwe/testutil"
+	"github.com/thesyncim/bwe/pkg/bwe/internal"
+	"github.com/thesyncim/bwe/pkg/bwe/testutil"
 )
 
 // TestEstimateDivergence_ReferenceComparison tests VALID-01:

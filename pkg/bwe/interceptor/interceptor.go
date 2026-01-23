@@ -11,7 +11,7 @@ import (
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 
-	"bwe/pkg/bwe"
+	"github.com/thesyncim/bwe/pkg/bwe"
 )
 
 const (

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"bwe/pkg/bwe/internal"
+	"github.com/thesyncim/bwe/pkg/bwe/internal"
 )
 
 func TestOveruseDetector_InitialState(t *testing.T) {

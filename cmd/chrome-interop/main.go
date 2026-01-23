@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"log"
 
-	"bwe/cmd/chrome-interop/server"
+	"github.com/thesyncim/bwe/cmd/chrome-interop/server"
 )
 
 func main() {

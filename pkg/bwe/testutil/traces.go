@@ -8,7 +8,7 @@ package testutil
 import (
 	"time"
 
-	"bwe/pkg/bwe/internal"
+	"github.com/thesyncim/bwe/pkg/bwe/internal"
 )
 
 // PacketInfo mirrors bwe.PacketInfo for trace generation without import cycle.

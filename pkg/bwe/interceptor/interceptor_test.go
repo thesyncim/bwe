@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bwe/pkg/bwe"
+	"github.com/thesyncim/bwe/pkg/bwe"
 )
 
 // makeRTPWithAbsSendTime creates an RTP packet with the abs-send-time extension.

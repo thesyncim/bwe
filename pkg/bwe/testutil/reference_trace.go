@@ -12,7 +12,7 @@ import (
 	"os"
 	"time"
 
-	"bwe/pkg/bwe/internal"
+	"github.com/thesyncim/bwe/pkg/bwe/internal"
 )
 
 // TracedPacket represents a single packet in a reference trace.

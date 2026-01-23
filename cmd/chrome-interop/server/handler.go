@@ -11,7 +11,7 @@ import (
 	"github.com/pion/interceptor/pkg/nack"
 	"github.com/pion/webrtc/v4"
 
-	bweinterceptor "bwe/pkg/bwe/interceptor"
+	bweinterceptor "github.com/thesyncim/bwe/pkg/bwe/interceptor"
 )
 
 // HandleOffer handles WebRTC offer requests from the browser.

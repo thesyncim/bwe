@@ -57,7 +57,7 @@ import (
 	"testing"
 	"time"
 
-	"bwe/pkg/bwe/internal"
+	"github.com/thesyncim/bwe/pkg/bwe/internal"
 )
 
 // benchResult is a package-level variable to prevent compiler optimizations

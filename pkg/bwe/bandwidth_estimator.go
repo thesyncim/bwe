@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"bwe/pkg/bwe/internal"
+	"github.com/thesyncim/bwe/pkg/bwe/internal"
 )
 
 // BandwidthEstimatorConfig configures the complete bandwidth estimator.

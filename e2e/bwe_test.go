@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"bwe/cmd/chrome-interop/server"
-	"bwe/pkg/bwe/testutil"
+	"github.com/thesyncim/bwe/cmd/chrome-interop/server"
+	"github.com/thesyncim/bwe/pkg/bwe/testutil"
 
 	"github.com/go-rod/rod"
 )
