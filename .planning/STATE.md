@@ -12,7 +12,7 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 Phase: 6 - Test Infrastructure Foundation
 Plan: 03 of 3 - PHASE COMPLETE
 Status: Phase complete
-Last activity: 2026-01-23 - Completed 06-03-PLAN.md (E2E test scaffolding)
+Last activity: 2026-01-23 - Completed quick task 001: Fix BWE TWCC issue
 
 Progress: [############################..] 56% (v1.0 + v1.1 complete, v1.2 Phase 6 COMPLETE)
 
@@ -164,6 +164,12 @@ None yet.
 ### Blockers/Concerns
 
 None - v1.2 roadmap ready for Phase 6 planning.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 001 | Fix BWE still working when REMB disabled (remove TWCC) | 2026-01-23 | 4e13282 | [001-fix-bwe-still-works-when-remb-disabled](./quick/001-fix-bwe-still-works-when-remb-disabled/) |
 
 ## Session Continuity
 
