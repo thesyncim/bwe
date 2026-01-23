@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 6 - Test Infrastructure Foundation
-Plan: 02 of 3
-Status: In progress
-Last activity: 2026-01-22 - Completed 06-02-PLAN.md (BrowserClient wrapper)
+Plan: 03 of 3 - PHASE COMPLETE
+Status: Phase complete
+Last activity: 2026-01-23 - Completed 06-03-PLAN.md (E2E test scaffolding)
 
-Progress: [##########################....] 52% (v1.0 + v1.1 complete, v1.2 Phase 6 in progress)
+Progress: [############################..] 56% (v1.0 + v1.1 complete, v1.2 Phase 6 COMPLETE)
 
 ## Performance Metrics
 
@@ -44,7 +44,7 @@ Progress: [##########################....] 52% (v1.0 + v1.1 complete, v1.2 Phase
 
 **v1.2 Status:**
 - Phases 6-10 planned (15 requirements across 5 phases)
-- Phase 6: In progress (2/3 plans complete)
+- Phase 6: COMPLETE (3/3 plans)
 
 ## Accumulated Context
 
@@ -131,6 +131,9 @@ Recent decisions affecting current work:
 - **[06-02]** Rod v0.116.2 for browser automation (simpler API than chromedp)
 - **[06-02]** WebRTC Chrome flags: use-fake-device-for-media-stream, use-fake-ui-for-media-stream
 - **[06-02]** BrowserClient wraps Rod with Navigate, Eval, WaitStable, Close methods
+- **[06-03]** Build-tagged e2e/ package isolated from go test ./...
+- **[06-03]** TestMain cleanup catches orphaned browsers from panics/failures
+- **[06-03]** BrowserClient.Navigate() must cancel timeout on correct page reference
 
 ### v1.2 Research Context
 
@@ -164,10 +167,10 @@ None - v1.2 roadmap ready for Phase 6 planning.
 
 ## Session Continuity
 
-Last session: 2026-01-22
-Stopped at: Completed 06-01-PLAN.md (Server package refactor)
+Last session: 2026-01-23
+Stopped at: Completed 06-03-PLAN.md (E2E test scaffolding) - Phase 6 COMPLETE
 Resume file: None
-Next action: `/gsd:execute-phase` 06-03-PLAN.md (06-01, 06-02 both complete)
+Next action: Begin Phase 7 (Network Simulation)
 
 ---
 
@@ -217,7 +220,7 @@ Next action: `/gsd:execute-phase` 06-03-PLAN.md (06-01, 06-02 both complete)
 
 | Phase | Goal | Requirements | Status |
 |-------|------|--------------|--------|
-| 6 | Test Infrastructure Foundation | (foundational) | In Progress (2/3) |
+| 6 | Test Infrastructure Foundation | (foundational) | COMPLETE (3/3) |
 | 7 | Network Simulation | NET-01, NET-02, NET-03, NET-04 | Pending |
 | 8 | Browser Automation | BROWSER-01, BROWSER-02, BROWSER-03 | Pending |
 | 9 | Integration Tests | INT-01, INT-02, INT-03, INT-04 | Pending |
@@ -263,4 +266,23 @@ All validation requirements verified:
 
 ---
 
-*Last updated: 2026-01-22 - Phase 6 Plans 01 and 02 complete*
+## Phase 6 COMPLETE
+
+**Phase 6 Progress:**
+
+| Plan | Name | Status | Duration |
+|------|------|--------|----------|
+| 06-01 | Server package refactor | COMPLETE | 3 min |
+| 06-02 | BrowserClient wrapper | COMPLETE | 2 min |
+| 06-03 | E2E test scaffolding | COMPLETE | 4 min |
+
+**Phase 6 Deliverables:**
+
+- Importable server package at `bwe/cmd/chrome-interop/server`
+- BrowserClient wrapper at `pkg/bwe/testutil/browser.go`
+- Build-tagged e2e/ package with TestChrome_CanConnect smoke test
+- TestMain cleanup for orphaned browser processes
+
+---
+
+*Last updated: 2026-01-23 - Phase 6 COMPLETE*
