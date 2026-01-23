@@ -70,7 +70,46 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 	loggingFactory := &loggingInterceptorFactory{factory: bweFactory}
 	i.Add(loggingFactory)
 
-	// Add NACK support for video
+	// IMPORTANT: Do NOT use RegisterDefaultInterceptors or ConfigureTWCCSender.
+	// Those enable TWCC feedback which allows Chrome's sender-side BWE to work
+	// independently of our REMB. For proper REMB-only testing, Chrome must
+	// rely solely on our receiver-side bandwidth estimates.
+
+	// Configure RTCP reports (Sender/Receiver reports) - required for WebRTC
+	if err := webrtc.ConfigureRTCPReports(i); err != nil {
+		log.Printf("Failed to configure RTCP reports: %v", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Configure stats interceptor for RTP stream statistics
+	if err := webrtc.ConfigureStatsInterceptor(i); err != nil {
+		log.Printf("Failed to configure stats interceptor: %v", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Configure simulcast extension headers (needed for multi-layer video)
+	if err := webrtc.ConfigureSimulcastExtensionHeaders(m); err != nil {
+		log.Printf("Failed to configure simulcast headers: %v", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Register NACK feedback types on MediaEngine for SDP negotiation
+	m.RegisterFeedback(webrtc.RTCPFeedback{Type: "nack"}, webrtc.RTPCodecTypeVideo)
+	m.RegisterFeedback(webrtc.RTCPFeedback{Type: "nack", Parameter: "pli"}, webrtc.RTPCodecTypeVideo)
+
+	// Add NACK generator (receiver-side, requests retransmissions on packet loss)
+	generator, err := nack.NewGeneratorInterceptor()
+	if err != nil {
+		log.Printf("Failed to create NACK generator: %v", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	i.Add(generator)
+
+	// Add NACK responder (sender-side, responds to NACK requests)
 	responder, err := nack.NewResponderInterceptor()
 	if err != nil {
 		log.Printf("Failed to create NACK responder: %v", err)
@@ -78,13 +117,6 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	i.Add(responder)
-
-	// Use default interceptors (RTCP reports, etc.)
-	if err := webrtc.RegisterDefaultInterceptors(m, i); err != nil {
-		log.Printf("Failed to register default interceptors: %v", err)
-		http.Error(w, "Internal error", http.StatusInternalServerError)
-		return
-	}
 
 	// Create API with custom media engine and interceptors
 	api := webrtc.NewAPI(
