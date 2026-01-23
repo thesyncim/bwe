@@ -101,6 +101,15 @@ const HTMLPage = `<!DOCTYPE html>
         let pc = null;
         let localStream = null;
 
+        // Munge SDP to remove transport-cc, forcing Chrome to use REMB-only BWE
+        function removeTransportCC(sdp) {
+            // Remove transport-cc RTCP feedback lines
+            sdp = sdp.replace(/a=rtcp-fb:\d+ transport-cc\r?\n/g, '');
+            // Remove transport-wide-cc RTP header extension
+            sdp = sdp.replace(/a=extmap:\d+ http:\/\/www\.ietf\.org\/id\/draft-holmer-rmcat-transport-wide-cc-extensions-01\r?\n/g, '');
+            return sdp;
+        }
+
         function setStatus(message, type) {
             const status = document.getElementById('status');
             status.textContent = 'Status: ' + message;
@@ -154,6 +163,8 @@ const HTMLPage = `<!DOCTYPE html>
                             }
 
                             const answer = await response.json();
+                            console.log('Munging answer SDP to remove transport-cc');
+                            answer.sdp = removeTransportCC(answer.sdp);
                             await pc.setRemoteDescription(answer);
                             setStatus('Connected! Check webrtc-internals for REMB stats', 'connected');
                         } catch (err) {
@@ -175,8 +186,10 @@ const HTMLPage = `<!DOCTYPE html>
                     }
                 };
 
-                // Create and set offer
+                // Create and set offer (with transport-cc removed)
                 const offer = await pc.createOffer();
+                console.log('Munging local SDP to remove transport-cc');
+                offer.sdp = removeTransportCC(offer.sdp);
                 await pc.setLocalDescription(offer);
 
             } catch (err) {
