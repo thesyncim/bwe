@@ -67,15 +67,19 @@ func NewBrowserClient(cfg BrowserConfig) (*BrowserClient, error) {
 // Returns the page for further interaction.
 func (c *BrowserClient) Navigate(url string) (*rod.Page, error) {
 	page := c.browser.MustPage()
-	c.page = page
 
-	err := page.Timeout(c.timeout).Navigate(url)
+	// Apply timeout and navigate - Timeout returns a new page with context
+	pageWithTimeout := page.Timeout(c.timeout)
+	err := pageWithTimeout.Navigate(url)
 	if err != nil {
 		return nil, fmt.Errorf("failed to navigate to %s: %w", url, err)
 	}
 
-	// Cancel timeout so Close() works
-	page.CancelTimeout()
+	// Cancel timeout so subsequent operations don't inherit it
+	pageWithTimeout.CancelTimeout()
+
+	// Store the page (original page, timeout already cancelled)
+	c.page = page
 	return page, nil
 }
 
