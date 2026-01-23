@@ -22,7 +22,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 5: Pion Type Adoption** - Adopt Pion extension types, validate no regressions
 
 **v1.2 (IN PROGRESS):**
-- [ ] **Phase 6: Test Infrastructure Foundation** - E2E directory, Rod browser helpers, chrome-interop refactor
+- [x] **Phase 6: Test Infrastructure Foundation** - E2E directory, Rod browser helpers, chrome-interop refactor
 - [ ] **Phase 7: Network Simulation** - Toxiproxy integration, Pion vnet for UDP, network condition helpers
 - [ ] **Phase 8: Browser Automation** - Automated Chrome REMB verification, headless testing
 - [ ] **Phase 9: Integration Tests** - Pion-to-Pion E2E, multi-stream, renegotiation scenarios
@@ -181,9 +181,9 @@ Plans:
 **Plans**: 3 plans in 2 waves
 
 Plans:
-- [ ] 06-01-PLAN.md - Refactor chrome-interop into importable server package
-- [ ] 06-02-PLAN.md - Create BrowserClient wrapper for WebRTC-ready Chrome
-- [ ] 06-03-PLAN.md - E2E test scaffolding with TestChrome_CanConnect smoke test
+- [x] 06-01-PLAN.md - Refactor chrome-interop into importable server package
+- [x] 06-02-PLAN.md - Create BrowserClient wrapper for WebRTC-ready Chrome
+- [x] 06-03-PLAN.md - E2E test scaffolding with TestChrome_CanConnect smoke test
 
 ---
 
@@ -275,7 +275,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 3. Pion Integration | 6/6 | Complete | 2026-01-22 |
 | 4. Optimization & Validation | 5/5 | Complete | 2026-01-22 |
 | 5. Pion Type Adoption | 3/3 | Complete | 2026-01-22 |
-| 6. Test Infrastructure Foundation | 0/3 | Pending | - |
+| 6. Test Infrastructure Foundation | 3/3 | Complete | 2026-01-23 |
 | 7. Network Simulation | 0/? | Pending | - |
 | 8. Browser Automation | 0/? | Pending | - |
 | 9. Integration Tests | 0/? | Pending | - |
@@ -333,4 +333,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 ---
 
 *Roadmap created: 2026-01-22*
-*Last updated: 2026-01-22 - Phase 6 plans created (3 plans in 2 waves)*
+*Last updated: 2026-01-23 - Phase 6 complete (3/3 plans executed)*
