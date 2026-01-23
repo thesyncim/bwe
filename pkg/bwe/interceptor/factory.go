@@ -19,6 +19,7 @@ type BWEInterceptorFactory struct {
 	config       bwe.BandwidthEstimatorConfig
 	rembInterval time.Duration
 	senderSSRC   uint32
+	onREMB       func(bitrate float32, ssrcs []uint32)
 }
 
 // WithInitialBitrate sets the initial bandwidth estimate.
@@ -70,6 +71,15 @@ func WithFactorySenderSSRC(ssrc uint32) FactoryOption {
 	}
 }
 
+// WithFactoryOnREMB sets a callback that is invoked each time a REMB packet is sent.
+// The callback receives the bitrate estimate and the SSRCs included in the REMB.
+func WithFactoryOnREMB(fn func(bitrate float32, ssrcs []uint32)) FactoryOption {
+	return func(f *BWEInterceptorFactory) error {
+		f.onREMB = fn
+		return nil
+	}
+}
+
 // NewBWEInterceptorFactory creates a new factory for BWEInterceptor instances.
 // Configure the factory using FactoryOption functions.
 //
@@ -103,12 +113,17 @@ func (f *BWEInterceptorFactory) NewInterceptor(_ string) (interceptor.Intercepto
 	// Create a new BandwidthEstimator with factory config
 	estimator := bwe.NewBandwidthEstimator(f.config, nil)
 
-	// Create interceptor with configured options
-	i := NewBWEInterceptor(
-		estimator,
+	// Build options list
+	opts := []InterceptorOption{
 		WithREMBInterval(f.rembInterval),
 		WithSenderSSRC(f.senderSSRC),
-	)
+	}
+	if f.onREMB != nil {
+		opts = append(opts, WithOnREMB(f.onREMB))
+	}
+
+	// Create interceptor with configured options
+	i := NewBWEInterceptor(estimator, opts...)
 
 	return i, nil
 }

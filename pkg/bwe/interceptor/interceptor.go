@@ -46,6 +46,7 @@ type BWEInterceptor struct {
 	rtcpWriter   interceptor.RTCPWriter
 	rembInterval time.Duration
 	senderSSRC   uint32
+	onREMB       func(bitrate float32, ssrcs []uint32)
 
 	// Lifecycle
 	closed    chan struct{}
@@ -69,6 +70,14 @@ func WithREMBInterval(d time.Duration) InterceptorOption {
 func WithSenderSSRC(ssrc uint32) InterceptorOption {
 	return func(i *BWEInterceptor) {
 		i.senderSSRC = ssrc
+	}
+}
+
+// WithOnREMB sets a callback that is invoked each time a REMB packet is sent.
+// The callback receives the bitrate estimate and the SSRCs included in the REMB.
+func WithOnREMB(fn func(bitrate float32, ssrcs []uint32)) InterceptorOption {
+	return func(i *BWEInterceptor) {
+		i.onREMB = fn
 	}
 }
 
@@ -265,6 +274,13 @@ func (i *BWEInterceptor) maybeSendREMB(now time.Time) {
 
 	// Send REMB
 	_, _ = writer.Write(pkts, nil) // Ignore errors (network issues)
+
+	// Invoke callback if set
+	if i.onREMB != nil {
+		if remb, ok := pkts[0].(*rtcp.ReceiverEstimatedMaximumBitrate); ok {
+			i.onREMB(remb.Bitrate, remb.SSRCs)
+		}
+	}
 }
 
 // cleanupLoop runs periodically to remove inactive streams.
