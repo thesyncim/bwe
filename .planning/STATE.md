@@ -12,7 +12,7 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 Phase: 6 - Test Infrastructure Foundation
 Plan: 03 of 3 - PHASE COMPLETE
 Status: Phase complete
-Last activity: 2026-01-23 - Completed quick task 001: Fix BWE TWCC issue
+Last activity: 2026-01-23 - Completed quick task 002: SDP munge transport-cc
 
 Progress: [############################..] 56% (v1.0 + v1.1 complete, v1.2 Phase 6 COMPLETE)
 
@@ -170,6 +170,7 @@ None - v1.2 roadmap ready for Phase 6 planning.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 001 | Fix BWE still working when REMB disabled (remove TWCC) | 2026-01-23 | 4e13282 | [001-fix-bwe-still-works-when-remb-disabled](./quick/001-fix-bwe-still-works-when-remb-disabled/) |
+| 002 | SDP munging to remove transport-cc (force REMB-only) | 2026-01-23 | 6aedfda | [002-sdp-munge-remove-transport-cc](./quick/002-sdp-munge-remove-transport-cc/) |
 
 ## Session Continuity
 
