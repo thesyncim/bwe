@@ -173,11 +173,12 @@ None - v1.2 roadmap ready for Phase 6 planning.
 | 002 | SDP munging to remove transport-cc (force REMB-only) | 2026-01-23 | 6aedfda | [002-sdp-munge-remove-transport-cc](./quick/002-sdp-munge-remove-transport-cc/) |
 | 003 | Fix REMB logging in chrome-interop (OnREMB callback) | 2026-01-23 | 922c120 | [003-fix-remb-logging](./quick/003-fix-remb-logging/) |
 | 004 | Add real E2E BWE test (TestChrome_BWERespondsToREMB) | 2026-01-23 | 5cba923 | [004-add-real-e2e-bwe-test](./quick/004-add-real-e2e-bwe-test/) |
+| 005 | Add comprehensive README.md | 2026-01-23 | 7049f21 | [005-add-state-of-art-readme](./quick/005-add-state-of-art-readme/) |
 
 ## Session Continuity
 
 Last session: 2026-01-23
-Stopped at: Completed quick task 004 - Real E2E BWE test
+Stopped at: Completed quick task 005 - README.md documentation
 Resume file: None
 Next action: Begin Phase 7 (Network Simulation)
 
@@ -294,4 +295,4 @@ All validation requirements verified:
 
 ---
 
-*Last updated: 2026-01-23 - Quick task 004 complete*
+*Last updated: 2026-01-23 - Quick task 005 complete*
