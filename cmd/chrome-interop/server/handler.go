@@ -9,7 +9,6 @@ import (
 
 	"github.com/pion/interceptor"
 	"github.com/pion/interceptor/pkg/nack"
-	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
 
 	bweinterceptor "bwe/pkg/bwe/interceptor"
@@ -53,22 +52,33 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 	// Create interceptor registry
 	i := &interceptor.Registry{}
 
-	// Add BWE interceptor factory
+	// State tracking for REMB logging deduplication
+	var (
+		lastEstimate uint64
+		estimateMu   sync.Mutex
+	)
+
+	// Add BWE interceptor factory with OnREMB callback for logging
 	bweFactory, err := bweinterceptor.NewBWEInterceptorFactory(
-		bweinterceptor.WithInitialBitrate(500_000),        // Start at 500 kbps
-		bweinterceptor.WithMinBitrate(100_000),            // Min 100 kbps
-		bweinterceptor.WithMaxBitrate(5_000_000),          // Max 5 Mbps
+		bweinterceptor.WithInitialBitrate(500_000),          // Start at 500 kbps
+		bweinterceptor.WithMinBitrate(100_000),              // Min 100 kbps
+		bweinterceptor.WithMaxBitrate(5_000_000),            // Max 5 Mbps
 		bweinterceptor.WithFactoryREMBInterval(time.Second), // 1 second interval
+		bweinterceptor.WithFactoryOnREMB(func(bitrate float32, ssrcs []uint32) {
+			estimateMu.Lock()
+			defer estimateMu.Unlock()
+			if uint64(bitrate) != lastEstimate {
+				log.Printf("REMB sent: estimate=%.0f bps, ssrcs=%v", bitrate, ssrcs)
+				lastEstimate = uint64(bitrate)
+			}
+		}),
 	)
 	if err != nil {
 		log.Printf("Failed to create BWE factory: %v", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
-
-	// Wrap BWE factory to log REMB packets
-	loggingFactory := &loggingInterceptorFactory{factory: bweFactory}
-	i.Add(loggingFactory)
+	i.Add(bweFactory)
 
 	// IMPORTANT: Do NOT use RegisterDefaultInterceptors or ConfigureTWCCSender.
 	// Those enable TWCC feedback which allows Chrome's sender-side BWE to work
@@ -212,44 +222,3 @@ func HandleOffer(w http.ResponseWriter, r *http.Request) {
 	log.Println("WebRTC connection established, watching for REMB packets...")
 }
 
-// rembLogger wraps an interceptor to log REMB packets being sent.
-type rembLogger struct {
-	interceptor.Interceptor
-	mu           sync.Mutex
-	lastEstimate uint64
-}
-
-func (l *rembLogger) BindRTCPWriter(writer interceptor.RTCPWriter) interceptor.RTCPWriter {
-	// Pass through to wrapped interceptor first
-	wrapped := l.Interceptor.BindRTCPWriter(writer)
-
-	// Then wrap the result to log REMB packets
-	return interceptor.RTCPWriterFunc(func(pkts []rtcp.Packet, attrs interceptor.Attributes) (int, error) {
-		for _, pkt := range pkts {
-			// Check if this is a REMB packet (RTCP Application-specific)
-			// REMB is encoded as RTCP APP with unique identifier
-			if remb, ok := pkt.(*rtcp.ReceiverEstimatedMaximumBitrate); ok {
-				l.mu.Lock()
-				if uint64(remb.Bitrate) != l.lastEstimate {
-					log.Printf("REMB sent: estimate=%.0f bps, ssrcs=%v", remb.Bitrate, remb.SSRCs)
-					l.lastEstimate = uint64(remb.Bitrate)
-				}
-				l.mu.Unlock()
-			}
-		}
-		return wrapped.Write(pkts, attrs)
-	})
-}
-
-// loggingInterceptorFactory wraps BWEInterceptorFactory to add REMB logging.
-type loggingInterceptorFactory struct {
-	factory *bweinterceptor.BWEInterceptorFactory
-}
-
-func (f *loggingInterceptorFactory) NewInterceptor(id string) (interceptor.Interceptor, error) {
-	inner, err := f.factory.NewInterceptor(id)
-	if err != nil {
-		return nil, err
-	}
-	return &rembLogger{Interceptor: inner}, nil
-}
