@@ -23,7 +23,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **v1.2 (IN PROGRESS):**
 - [x] **Phase 6: Test Infrastructure Foundation** - E2E directory, Rod browser helpers, chrome-interop refactor
-- [ ] **Phase 7: Network Simulation** - Toxiproxy integration, Pion vnet for UDP, network condition helpers
+- [ ] **Phase 7: Network Simulation** - Pion vnet for UDP network conditions, VNetSimulator helpers
 - [ ] **Phase 8: Browser Automation** - Automated Chrome REMB verification, headless testing
 - [ ] **Phase 9: Integration Tests** - Pion-to-Pion E2E, multi-stream, renegotiation scenarios
 - [ ] **Phase 10: CI Integration** - GitHub Actions workflow, parallel execution, regression detection
@@ -202,7 +202,12 @@ Plans:
   4. User can simulate packet loss patterns (random 5%, burst loss) and observe BWE adapting appropriately
   5. Deterministic tests use seeded randomness for reproducible results (no flaky assertions)
 
-**Plans**: TBD (created during plan-phase)
+**Plans**: 3 plans in 2 waves
+
+Plans:
+- [ ] 07-01-PLAN.md - Create NetworkCondition type and VNetSimulator wrapper (NET-01, NET-02, NET-03, NET-04)
+- [ ] 07-02-PLAN.md - E2E network condition tests validating latency, bandwidth, loss
+- [ ] 07-03-PLAN.md - VNet PeerConnection helpers for WebRTC over virtual networks
 
 ---
 
@@ -276,7 +281,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 4. Optimization & Validation | 5/5 | Complete | 2026-01-22 |
 | 5. Pion Type Adoption | 3/3 | Complete | 2026-01-22 |
 | 6. Test Infrastructure Foundation | 3/3 | Complete | 2026-01-23 |
-| 7. Network Simulation | 0/? | Pending | - |
+| 7. Network Simulation | 0/3 | Planned | - |
 | 8. Browser Automation | 0/? | Pending | - |
 | 9. Integration Tests | 0/? | Pending | - |
 | 10. CI Integration | 0/? | Pending | - |
@@ -333,4 +338,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 ---
 
 *Roadmap created: 2026-01-22*
-*Last updated: 2026-01-23 - Phase 6 complete (3/3 plans executed)*
+*Last updated: 2026-01-23 - Phase 7 planned (3 plans in 2 waves)*
